@@ -1,0 +1,23 @@
+[package]
+name = "pdd-bot"
+version = "0.1.0"
+edition = "2024"
+authors = ["Oleksiy Slyshyk <alexslyshyk@gmail.com>"]
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.0", features = ["derive"] }
+log = "0.4"
+tokio = { version = "1.0", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = [ "env-filter" ] }
+serde = { version = "1.0", features = ["derive"] }
+toml = "1.0.3"
+fs-err = "3.0"
+
+[build-dependencies]
+git-version = "0.3"
+
+[profile.release]
+lto = true
+opt-level = 's'  # Optimize for size.
