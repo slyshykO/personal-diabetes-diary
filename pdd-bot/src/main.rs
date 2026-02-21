@@ -3,6 +3,7 @@ mod args;
 use clap::Parser;
 use std::path::Path;
 use std::process::ExitCode;
+use teloxide::prelude::*;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
@@ -43,6 +44,13 @@ async fn run<P: AsRef<Path> + Send>(path: P) -> anyhow::Result<()> {
     );
     let path = path.as_ref();
     let config = args::AppConfig::from_file(path)?;
+    let tg_bot_token = config
+        .tg_bot_token
+        .ok_or_else(|| anyhow::anyhow!("tg_bot_token is required in config"))?;
+    let tg_chat_id = config
+        .tg_chat_id
+        .ok_or_else(|| anyhow::anyhow!("tg_chat_id is required in config"))?;
+    let bot = Bot::new(tg_bot_token);
     tracing::info!("Running with config: {}", path.display());
     Ok(())
 }
