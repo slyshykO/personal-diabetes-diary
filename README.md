@@ -18,6 +18,7 @@ This bot stores all diary data as plain text files (`.csv`, `.txt`) on disk.
 tg_bot_token = "<YOUR_TELEGRAM_BOT_TOKEN>"
 tg_chat_id = ["<YOUR_CHAT_ID>"]
 data_dir = "data"
+input_timezone = "Europe/Kyiv"
 ```
 
 2. Build and run:
@@ -72,11 +73,14 @@ Create `pdd-bot/config.toml`:
 tg_bot_token = "<YOUR_TELEGRAM_BOT_TOKEN>"
 tg_chat_id = ["<YOUR_CHAT_ID>"]
 data_dir = "data"
+input_timezone = "Europe/Kyiv"
 ```
 
 Notes:
 
 - `tg_chat_id` is a list of allowed chat IDs.
+- `input_timezone` is used to interpret manually entered date/time (no timezone in input).
+- Timestamps are stored in UTC in CSV files.
 - Replace token/id values with your own.
 
 ## Build

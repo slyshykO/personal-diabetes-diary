@@ -35,6 +35,7 @@ pub(crate) struct AppConfig {
     pub(crate) tg_bot_token: Option<String>,
     pub(crate) tg_chat_id: Option<Vec<String>>,
     pub(crate) data_dir: Option<String>,
+    pub(crate) input_timezone: Option<String>,
 }
 
 #[allow(dead_code)]

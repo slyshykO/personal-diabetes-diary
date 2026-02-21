@@ -1,6 +1,7 @@
 mod args;
 
-use chrono::{Datelike, Local, LocalResult, NaiveDate, NaiveTime, TimeZone};
+use chrono::{Datelike, LocalResult, NaiveDate, NaiveTime, TimeZone, Utc};
+use chrono_tz::Tz;
 use clap::Parser;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -47,6 +48,7 @@ struct AppState {
     pending_by_chat: Arc<Mutex<HashMap<ChatId, PendingEntry>>>,
     allowed_chat_ids: HashSet<ChatId>,
     data_dir: PathBuf,
+    input_tz: Tz,
 }
 
 #[tokio::main]
@@ -106,12 +108,20 @@ async fn run<P: AsRef<Path> + Send>(path: P) -> anyhow::Result<()> {
         .clone()
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("data"));
+    let input_tz_name = config
+        .input_timezone
+        .clone()
+        .unwrap_or_else(|| "UTC".to_string());
+    let input_tz = input_tz_name
+        .parse::<Tz>()
+        .map_err(|_| anyhow::anyhow!("invalid input_timezone '{input_tz_name}'. Use IANA timezone, e.g. Europe/Kyiv or UTC"))?;
     fs_err::create_dir_all(&data_dir)?;
 
     let state = AppState {
         pending_by_chat: Arc::new(Mutex::new(HashMap::new())),
         allowed_chat_ids,
         data_dir,
+        input_tz,
     };
 
     let bot = Bot::new(tg_bot_token);
@@ -190,7 +200,7 @@ async fn handle_message(bot: Bot, message: Message, state: Arc<AppState>) -> any
             return Ok(());
         }
 
-        let (value, timestamp, note) = match parse_glucose_payload(payload) {
+        let (value, timestamp, note) = match parse_glucose_payload(payload, state.input_tz) {
             Ok(ok) => ok,
             Err(msg) => {
                 bot.send_message(chat_id, msg.to_string())
@@ -289,7 +299,7 @@ async fn handle_message(bot: Bot, message: Message, state: Arc<AppState>) -> any
     if let Some(pending) = get_pending(&state, chat_id).await {
         match pending {
             PendingEntry::GlucoseBeforeMeal | PendingEntry::GlucoseAfterMeal => {
-                match parse_glucose_payload(text) {
+                match parse_glucose_payload(text, state.input_tz) {
                     Ok((value, timestamp, note)) => {
                         let tag = match pending {
                             PendingEntry::GlucoseBeforeMeal => GlucoseTag::BeforeMeal,
@@ -394,7 +404,10 @@ Note example: @before breakfast\n\n\
 Warning: data is stored as plain text CSV/TXT and is not encrypted by this bot."
 }
 
-fn parse_glucose_payload(payload: &str) -> anyhow::Result<(f64, Option<String>, Option<String>)> {
+fn parse_glucose_payload(
+    payload: &str,
+    input_tz: Tz,
+) -> anyhow::Result<(f64, Option<String>, Option<String>)> {
     let (without_note, note) = split_note(payload);
     let mut parts = without_note.split_whitespace();
     let value_raw = parts
@@ -408,7 +421,7 @@ fn parse_glucose_payload(payload: &str) -> anyhow::Result<(f64, Option<String>, 
         return Ok((value, None, note));
     }
 
-    let dt = parse_flexible_datetime(&rest).ok_or_else(|| {
+    let dt = parse_flexible_datetime(&rest, input_tz).ok_or_else(|| {
         anyhow::anyhow!(
             "Invalid date/time. Examples: 2/1 9:05, 02/01 09:05, 24/2/1 9:05, 2024/2/1 9:05"
         )
@@ -433,7 +446,7 @@ fn split_note(input: &str) -> (&str, Option<String>) {
     }
 }
 
-fn parse_flexible_datetime(input: &str) -> Option<chrono::DateTime<Local>> {
+fn parse_flexible_datetime(input: &str, input_tz: Tz) -> Option<chrono::DateTime<Utc>> {
     let normalized = input.trim().replace(['-', '.'], "/");
     let mut parts = normalized.split_whitespace();
     let date_part = parts.next()?;
@@ -461,7 +474,8 @@ fn parse_flexible_datetime(input: &str) -> Option<chrono::DateTime<Local>> {
     let (year, month, day) = if date_parts.len() == 2 {
         let month = date_parts[0].parse::<u32>().ok()?;
         let day = date_parts[1].parse::<u32>().ok()?;
-        (Local::now().year(), month, day)
+        let current_year = Utc::now().with_timezone(&input_tz).year();
+        (current_year, month, day)
     } else {
         let year_raw = date_parts[0].parse::<i32>().ok()?;
         let month = date_parts[1].parse::<u32>().ok()?;
@@ -478,9 +492,9 @@ fn parse_flexible_datetime(input: &str) -> Option<chrono::DateTime<Local>> {
     let date = NaiveDate::from_ymd_opt(year, month, day)?;
     let time = NaiveTime::from_hms_opt(hour, minute, 0)?;
     let naive = date.and_time(time);
-    match Local.from_local_datetime(&naive) {
-        LocalResult::Single(dt) => Some(dt),
-        LocalResult::Ambiguous(dt, _) => Some(dt),
+    match input_tz.from_local_datetime(&naive) {
+        LocalResult::Single(dt) => Some(dt.with_timezone(&Utc)),
+        LocalResult::Ambiguous(dt, _) => Some(dt.with_timezone(&Utc)),
         LocalResult::None => None,
     }
 }
@@ -647,9 +661,12 @@ fn append_glucose_csv(
 ) -> anyhow::Result<()> {
     let file = user_data_dir(data_dir, chat_id).join("glucose.csv");
     append_line_if_needed(&file, "timestamp,chat_id,tag,value_mmol_l,note")?;
-    let ts = timestamp
-        .map(str::to_owned)
-        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+    let ts = match timestamp {
+        Some(raw) => chrono::DateTime::parse_from_rfc3339(raw)
+            .map(|dt| dt.with_timezone(&Utc).to_rfc3339())
+            .unwrap_or_else(|_| Utc::now().to_rfc3339()),
+        None => Utc::now().to_rfc3339(),
+    };
     let escaped_note = csv_escape(note.unwrap_or(""));
     append_csv_line(
         &file,
