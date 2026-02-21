@@ -1,11 +1,10 @@
 mod args;
 
-use clap::Parser;
 use chrono::{Datelike, Local, LocalResult, NaiveDate, NaiveTime, TimeZone};
+use clap::Parser;
 use std::collections::{HashMap, HashSet};
-use std::ffi::OsStr;
-use std::path::PathBuf;
 use std::path::Path;
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 use teloxide::prelude::*;
@@ -153,8 +152,7 @@ fn build_menu_keyboard(medications: &[String]) -> KeyboardMarkup {
         rows.push(row);
     }
 
-    KeyboardMarkup::new(rows)
-    .resize_keyboard()
+    KeyboardMarkup::new(rows).resize_keyboard()
 }
 
 async fn menu_keyboard(state: &AppState, chat_id: ChatId) -> KeyboardMarkup {
@@ -247,8 +245,8 @@ async fn handle_message(bot: Bot, message: Message, state: Arc<AppState>) -> any
                 chat_id,
                 "Enter glucose: <value> [date time] [@note], e.g. 5.8 2/1 9:05 @before breakfast",
             )
-                .reply_markup(menu_keyboard(&state, chat_id).await)
-                .await?;
+            .reply_markup(menu_keyboard(&state, chat_id).await)
+            .await?;
             return Ok(());
         }
         BTN_GLUCOSE_AFTER_MEAL => {
@@ -257,8 +255,8 @@ async fn handle_message(bot: Bot, message: Message, state: Arc<AppState>) -> any
                 chat_id,
                 "Enter glucose: <value> [date time] [@note], e.g. 7.2 2/1 11:00 @after lunch",
             )
-                .reply_markup(menu_keyboard(&state, chat_id).await)
-                .await?;
+            .reply_markup(menu_keyboard(&state, chat_id).await)
+            .await?;
             return Ok(());
         }
         BTN_WEIGHT => {
@@ -274,9 +272,12 @@ async fn handle_message(bot: Bot, message: Message, state: Arc<AppState>) -> any
     if let Some(medication_name) = parse_medication_button(text) {
         if medication_exists(&state, chat_id, medication_name).await {
             append_medication_log_csv(&state.data_dir, chat_id, medication_name)?;
-            bot.send_message(chat_id, format!("Medication usage saved ✅ ({medication_name})"))
-                .reply_markup(menu_keyboard(&state, chat_id).await)
-                .await?;
+            bot.send_message(
+                chat_id,
+                format!("Medication usage saved ✅ ({medication_name})"),
+            )
+            .reply_markup(menu_keyboard(&state, chat_id).await)
+            .await?;
         } else {
             bot.send_message(chat_id, "Unknown medication. Use /addmed <name> first.")
                 .reply_markup(menu_keyboard(&state, chat_id).await)
@@ -407,12 +408,11 @@ fn parse_glucose_payload(payload: &str) -> anyhow::Result<(f64, Option<String>, 
         return Ok((value, None, note));
     }
 
-    let dt = parse_flexible_datetime(&rest)
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Invalid date/time. Examples: 2/1 9:05, 02/01 09:05, 24/2/1 9:05, 2024/2/1 9:05"
-            )
-        })?;
+    let dt = parse_flexible_datetime(&rest).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Invalid date/time. Examples: 2/1 9:05, 02/01 09:05, 24/2/1 9:05, 2024/2/1 9:05"
+        )
+    })?;
     Ok((value, Some(dt.to_rfc3339()), note))
 }
 
@@ -434,7 +434,7 @@ fn split_note(input: &str) -> (&str, Option<String>) {
 }
 
 fn parse_flexible_datetime(input: &str) -> Option<chrono::DateTime<Local>> {
-    let normalized = input.trim().replace('-', "/").replace('.', "/");
+    let normalized = input.trim().replace(['-', '.'], "/");
     let mut parts = normalized.split_whitespace();
     let date_part = parts.next()?;
     let time_part = parts.next()?;
@@ -576,12 +576,19 @@ fn append_medication_name(data_dir: &Path, chat_id: ChatId, name: &str) -> anyho
     append_csv_line(&path, name)
 }
 
-fn append_medication_log_csv(data_dir: &Path, chat_id: ChatId, medication: &str) -> anyhow::Result<()> {
+fn append_medication_log_csv(
+    data_dir: &Path,
+    chat_id: ChatId,
+    medication: &str,
+) -> anyhow::Result<()> {
     let file = user_data_dir(data_dir, chat_id).join(MEDICATION_LOG_FILE);
     append_line_if_needed(&file, "timestamp,chat_id,medication")?;
     let ts = chrono::Utc::now().to_rfc3339();
     let escaped_medication = medication.replace('"', "\"\"");
-    append_csv_line(&file, &format!("{ts},{},\"{escaped_medication}\"", chat_id.0))
+    append_csv_line(
+        &file,
+        &format!("{ts},{},\"{escaped_medication}\"", chat_id.0),
+    )
 }
 
 async fn set_pending(state: &AppState, chat_id: ChatId, pending: PendingEntry) {
@@ -646,7 +653,12 @@ fn append_glucose_csv(
     let escaped_note = csv_escape(note.unwrap_or(""));
     append_csv_line(
         &file,
-        &format!("{ts},{},{},{},\"{escaped_note}\"", chat_id.0, tag.as_csv_tag(), value),
+        &format!(
+            "{ts},{},{},{},\"{escaped_note}\"",
+            chat_id.0,
+            tag.as_csv_tag(),
+            value
+        ),
     )
 }
 
@@ -659,13 +671,8 @@ fn append_line_if_needed(path: &Path, header: &str) -> anyhow::Result<()> {
         fs_err::create_dir_all(parent)?;
     }
     if !path.exists() {
-        let mut initial = String::from(header);
-        if path.extension() == Some(OsStr::new("txt")) {
-            initial.push('\n');
-        } else {
-            initial.push('\n');
-        }
-        fs_err::write(path, initial)?;
+        fs_err::write(path, header)?;
+        fs_err::write(path, "\n")?;
     }
     Ok(())
 }
