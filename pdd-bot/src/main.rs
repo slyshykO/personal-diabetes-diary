@@ -671,8 +671,7 @@ fn append_line_if_needed(path: &Path, header: &str) -> anyhow::Result<()> {
         fs_err::create_dir_all(parent)?;
     }
     if !path.exists() {
-        fs_err::write(path, header)?;
-        fs_err::write(path, "\n")?;
+        fs_err::write(path, format!("{header}\n"))?;
     }
     Ok(())
 }
