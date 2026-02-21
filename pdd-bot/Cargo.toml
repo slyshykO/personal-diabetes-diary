@@ -15,6 +15,7 @@ serde = { version = "1.0", features = ["derive"] }
 toml = "1.0.3"
 fs-err = "3.0"
 teloxide = { version = "0.17", features = ["macros"] }
+chrono = { version = "0.4", features = ["clock"] }
 
 [build-dependencies]
 git-version = "0.3"

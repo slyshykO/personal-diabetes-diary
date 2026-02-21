@@ -34,6 +34,7 @@ pub(crate) enum Action {
 pub(crate) struct AppConfig {
     pub(crate) tg_bot_token: Option<String>,
     pub(crate) tg_chat_id: Option<Vec<String>>,
+    pub(crate) data_dir: Option<String>,
 }
 
 impl Default for AppConfig {
@@ -41,6 +42,7 @@ impl Default for AppConfig {
         Self {
             tg_bot_token: None,
             tg_chat_id: None,
+            data_dir: None,
         }
     }
 }
