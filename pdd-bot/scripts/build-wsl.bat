@@ -12,8 +12,14 @@ set wsl_dir=%~dp0
 set wsl_dir=%wsl_dir:\=/%
 set wsl_dir=%wsl_dir:C:=/mnt/c%
 set wsl_dir=%wsl_dir:D:=/mnt/d%
+set wsl_name=Ubuntu
+set wsl_user=alex
 
-wsl -d WLinux -u alex --shell-type login "%wsl_dir%build-wsl.sh"  || goto :error
+if "%computername%"=="ALEX-TITAN" (
+    set wsl_name=WLinux
+)
+
+wsl -d %wsl_name% -u %wsl_user% --shell-type login "%wsl_dir%build-wsl.sh"  || goto :error
 
 cd /d %saved_dir%
 exit /b 0

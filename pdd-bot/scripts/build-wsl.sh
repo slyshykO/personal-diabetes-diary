@@ -18,8 +18,8 @@ SCRIPTDIR=$(get_script_dir)
 
 echo "build version $(git describe --tags --always --dirty)"
 
-cargo build --release --target x86_64-unknown-linux-gnu --manifest-path $SCRIPTDIR/../Cargo.toml --target-dir $SCRIPTDIR/../target/target-wsl
-#cargo build --release --target x86_64-unknown-linux-musl --manifest-path $SCRIPTDIR/../Cargo.toml --target-dir $SCRIPTDIR/../target/target-wsl
+cargo build --release --target x86_64-unknown-linux-gnu --manifest-path "$SCRIPTDIR/../Cargo.toml" --target-dir "$SCRIPTDIR/../target/target-wsl"
+#cargo build --release --target x86_64-unknown-linux-musl --manifest-path "$SCRIPTDIR/../Cargo.toml" --target-dir "$SCRIPTDIR/../target/target-wsl"
 if [[ $? != 0 ]]; then
     echo "FAIL"
     exit 1
