@@ -4,11 +4,15 @@ use chrono_tz::Tz;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 use teloxide::prelude::*;
 use teloxide::types::{KeyboardButton, KeyboardMarkup};
 use tokio::sync::Mutex;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+const DEFAULT_AFTER_MEAL_REMINDER_MINUTES: u64 = 150;
+const DEFAULT_AFTER_MEAL_REMINDER_COUNT: u32 = 3;
+const DEFAULT_AFTER_MEAL_REMINDER_INTERVAL_MINUTES: u64 = 15;
 const BTN_GLUCOSE_BEFORE_MEAL: &str = "🩸 Glucose: Before meal";
 const BTN_GLUCOSE_AFTER_MEAL: &str = "🩸 Glucose: After meal";
 const BTN_WEIGHT: &str = "⚖️ Weight";
@@ -42,9 +46,13 @@ enum PendingEntry {
 #[derive(Debug, Clone)]
 struct AppState {
     pending_by_chat: Arc<Mutex<HashMap<ChatId, PendingEntry>>>,
+    after_meal_reminder_generations: Arc<Mutex<HashMap<ChatId, u64>>>,
     allowed_chat_ids: HashSet<ChatId>,
     data_dir: PathBuf,
     input_tz: Tz,
+    glucose_after_meal_reminder_minutes: u64,
+    glucose_after_meal_reminder_count: u32,
+    glucose_after_meal_reminder_interval_minutes: u64,
 }
 
 pub(crate) async fn run<P: AsRef<Path> + Send>(path: P) -> anyhow::Result<()> {
@@ -84,13 +92,26 @@ pub(crate) async fn run<P: AsRef<Path> + Send>(path: P) -> anyhow::Result<()> {
             "invalid input_timezone '{input_tz_name}'. Use IANA timezone, e.g. Europe/Kyiv or UTC"
         )
     })?;
+    let glucose_after_meal_reminder_minutes = config
+        .glucose_after_meal_reminder_minutes
+        .unwrap_or(DEFAULT_AFTER_MEAL_REMINDER_MINUTES);
+    let glucose_after_meal_reminder_count = config
+        .glucose_after_meal_reminder_count
+        .unwrap_or(DEFAULT_AFTER_MEAL_REMINDER_COUNT);
+    let glucose_after_meal_reminder_interval_minutes = config
+        .glucose_after_meal_reminder_interval_minutes
+        .unwrap_or(DEFAULT_AFTER_MEAL_REMINDER_INTERVAL_MINUTES);
     fs_err::create_dir_all(&data_dir)?;
 
     let state = AppState {
         pending_by_chat: Arc::new(Mutex::new(HashMap::new())),
+        after_meal_reminder_generations: Arc::new(Mutex::new(HashMap::new())),
         allowed_chat_ids,
         data_dir,
         input_tz,
+        glucose_after_meal_reminder_minutes,
+        glucose_after_meal_reminder_count,
+        glucose_after_meal_reminder_interval_minutes,
     };
 
     let bot = Bot::new(tg_bot_token);
@@ -187,6 +208,7 @@ async fn handle_message(bot: Bot, message: Message, state: Arc<AppState>) -> any
             timestamp.as_deref(),
             note.as_deref(),
         )?;
+        update_after_meal_reminders(&bot, &state, chat_id, tag).await;
         bot.send_message(chat_id, "Glucose entry saved ✅")
             .reply_markup(menu_keyboard(&state, chat_id).await)
             .await?;
@@ -283,6 +305,7 @@ async fn handle_message(bot: Bot, message: Message, state: Arc<AppState>) -> any
                             timestamp.as_deref(),
                             note.as_deref(),
                         )?;
+                        update_after_meal_reminders(&bot, &state, chat_id, tag).await;
                         clear_pending(&state, chat_id).await;
                         bot.send_message(chat_id, "Saved ✅")
                             .reply_markup(menu_keyboard(&state, chat_id).await)
@@ -322,6 +345,84 @@ async fn handle_message(bot: Bot, message: Message, state: Arc<AppState>) -> any
     .reply_markup(menu_keyboard(&state, chat_id).await)
     .await?;
     Ok(())
+}
+
+async fn update_after_meal_reminders(
+    bot: &Bot,
+    state: &Arc<AppState>,
+    chat_id: ChatId,
+    tag: GlucoseTag,
+) {
+    match tag {
+        GlucoseTag::BeforeMeal => schedule_after_meal_reminders(bot, state, chat_id).await,
+        GlucoseTag::AfterMeal => cancel_after_meal_reminders(state, chat_id).await,
+    }
+}
+
+async fn schedule_after_meal_reminders(bot: &Bot, state: &Arc<AppState>, chat_id: ChatId) {
+    let reminder_minutes = state.glucose_after_meal_reminder_minutes;
+    let reminder_count = state.glucose_after_meal_reminder_count;
+    if reminder_minutes == 0 || reminder_count == 0 {
+        return;
+    }
+
+    let reminder_generation = next_after_meal_reminder_generation(state, chat_id).await;
+    let reminder_interval_minutes = state.glucose_after_meal_reminder_interval_minutes;
+    let bot = bot.clone();
+    let state = Arc::clone(state);
+    tokio::spawn(async move {
+        for reminder_index in 0..reminder_count {
+            let delay_minutes = if reminder_index == 0 {
+                reminder_minutes
+            } else {
+                reminder_interval_minutes
+            };
+            tokio::time::sleep(Duration::from_secs(delay_minutes.saturating_mul(60))).await;
+
+            if !is_current_after_meal_reminder_generation(&state, chat_id, reminder_generation)
+                .await
+            {
+                return;
+            }
+
+            if let Err(err) = bot
+                .send_message(
+                    chat_id,
+                    format!(
+                        "Time to measure glucose after meal. Reminder {}/{}.",
+                        reminder_index + 1,
+                        reminder_count
+                    ),
+                )
+                .reply_markup(menu_keyboard(&state, chat_id).await)
+                .await
+            {
+                tracing::error!("after meal reminder error: {err}");
+            }
+        }
+    });
+}
+
+async fn next_after_meal_reminder_generation(state: &AppState, chat_id: ChatId) -> u64 {
+    let mut lock = state.after_meal_reminder_generations.lock().await;
+    let generation = lock.entry(chat_id).or_insert(0);
+    *generation = generation.saturating_add(1);
+    *generation
+}
+
+async fn cancel_after_meal_reminders(state: &AppState, chat_id: ChatId) {
+    let mut lock = state.after_meal_reminder_generations.lock().await;
+    let generation = lock.entry(chat_id).or_insert(0);
+    *generation = generation.saturating_add(1);
+}
+
+async fn is_current_after_meal_reminder_generation(
+    state: &AppState,
+    chat_id: ChatId,
+    reminder_generation: u64,
+) -> bool {
+    let lock = state.after_meal_reminder_generations.lock().await;
+    lock.get(&chat_id).copied() == Some(reminder_generation)
 }
 
 async fn send_menu(bot: &Bot, chat_id: ChatId, state: &AppState) -> anyhow::Result<()> {

@@ -36,6 +36,9 @@ pub(crate) struct AppConfig {
     pub(crate) tg_chat_id: Option<Vec<String>>,
     pub(crate) data_dir: Option<String>,
     pub(crate) input_timezone: Option<String>,
+    pub(crate) glucose_after_meal_reminder_minutes: Option<u64>,
+    pub(crate) glucose_after_meal_reminder_count: Option<u32>,
+    pub(crate) glucose_after_meal_reminder_interval_minutes: Option<u64>,
 }
 
 #[allow(dead_code)]
