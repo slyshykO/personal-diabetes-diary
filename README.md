@@ -19,6 +19,9 @@ tg_bot_token = "<YOUR_TELEGRAM_BOT_TOKEN>"
 tg_chat_id = ["<YOUR_CHAT_ID>"]
 data_dir = "data"
 input_timezone = "Europe/Kyiv"
+glucose_after_meal_reminder_minutes = 150
+glucose_after_meal_reminder_count = 3
+glucose_after_meal_reminder_interval_minutes = 15
 ```
 
 2. Build and run:
@@ -43,6 +46,7 @@ cargo run
 - Medication usage logging
 - Optional glucose note starting with `@`
 - Optional glucose date/time in flexible formats
+- Configurable after-meal glucose reminders
 
 ## Project layout
 
@@ -74,12 +78,30 @@ tg_bot_token = "<YOUR_TELEGRAM_BOT_TOKEN>"
 tg_chat_id = ["<YOUR_CHAT_ID>"]
 data_dir = "data"
 input_timezone = "Europe/Kyiv"
+glucose_after_meal_reminder_minutes = 150
+glucose_after_meal_reminder_count = 3
+glucose_after_meal_reminder_interval_minutes = 15
 ```
+
+Fields:
+
+- `tg_bot_token` is required. Use the Telegram bot token from BotFather.
+- `tg_chat_id` is required. It is a list of allowed Telegram chat IDs.
+- `data_dir` is optional. It defaults to `data`.
+- `input_timezone` is optional. It defaults to `UTC` and is used to interpret manually entered date/time without timezone.
+- `glucose_after_meal_reminder_minutes` is optional. It defaults to `150`; set it to `0` to disable after-meal reminders.
+- `glucose_after_meal_reminder_count` is optional. It defaults to `3`; set it to `0` to disable after-meal reminders.
+- `glucose_after_meal_reminder_interval_minutes` is optional. It defaults to `15` and controls the delay between repeated reminders.
+
+Reminder behavior:
+
+- Adding glucose before meal schedules after-meal reminders for that chat.
+- Adding glucose after meal cancels pending after-meal reminders for that chat.
+- The first reminder is sent after `glucose_after_meal_reminder_minutes`.
+- Additional reminders are sent every `glucose_after_meal_reminder_interval_minutes` until `glucose_after_meal_reminder_count` reminders have been sent.
 
 Notes:
 
-- `tg_chat_id` is a list of allowed chat IDs.
-- `input_timezone` is used to interpret manually entered date/time (no timezone in input).
 - Timestamps are stored in UTC in CSV files.
 - Replace token/id values with your own.
 
