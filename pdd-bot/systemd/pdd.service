@@ -1,0 +1,17 @@
+[Unit]
+Description=Miner API service
+After=network.target
+
+[Service]
+PIDFile=/run/pdd-bot.pid
+ExecStart=/ --config /usr/local/share/miner-api/api-config.toml
+ExecStop=/bin/sh -l -c "kill -15 $(ps ax | grep -v grep | grep pdd-bot | awk '{print $1}')"
+Restart=always
+RestartSec=3
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=api
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
