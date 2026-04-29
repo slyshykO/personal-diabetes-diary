@@ -28,6 +28,8 @@ pub(crate) enum Action {
         #[clap(short, long, value_parser, default_value = "config.toml")]
         config: String,
     },
+    /// Install as service (Linux only).
+    Install,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]

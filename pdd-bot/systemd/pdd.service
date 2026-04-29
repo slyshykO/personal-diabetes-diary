@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 PIDFile=/run/pdd-bot.pid
-ExecStart=/ --config /usr/local/share/miner-api/api-config.toml
+ExecStart=/opt/alex/bin/pdd-bot --config /opt/alex/share/config.toml
 ExecStop=/bin/sh -l -c "kill -15 $(ps ax | grep -v grep | grep pdd-bot | awk '{print $1}')"
 Restart=always
 RestartSec=3

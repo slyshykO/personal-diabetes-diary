@@ -1,5 +1,6 @@
 .vscode/
 .data/
 /target
+.codex
 Cargo.lock
 config.toml

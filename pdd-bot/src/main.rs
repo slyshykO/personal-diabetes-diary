@@ -1,10 +1,11 @@
-mod args;
-mod tgbot;
-
 use clap::Parser;
 use std::path::Path;
 use std::process::ExitCode;
 
+pub mod install;
+
+mod args;
+mod tgbot;
 #[tokio::main]
 async fn main() -> ExitCode {
     let args = args::Args::parse();
@@ -17,6 +18,13 @@ async fn main() -> ExitCode {
             Err(e) => {
                 eprintln!("bad config: {e}");
                 ExitCode::from(3)
+            }
+        },
+        Some(args::Action::Install) => match install::install() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("failed to install: {e}");
+                ExitCode::from(4)
             }
         },
         None => {
