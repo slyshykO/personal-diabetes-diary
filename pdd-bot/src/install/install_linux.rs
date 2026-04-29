@@ -7,6 +7,36 @@ fn is_we_root() -> bool {
 }
 
 pub(crate) fn install_systemd_service() -> anyhow::Result<()> {
+    if !is_we_root() {
+        anyhow::bail!("must be run as root");
+    }
+
+    //check if systemd is available
+    if !std::path::Path::new("/run/systemd/system").exists() {
+        anyhow::bail!("systemd is not available");
+    }
+
+    //check if pdd-bot is running as a systemd service
+    if std::path::Path::new("/run/systemd/system/pdd-bot.service").exists() {
+        // check if the service is running
+        let output = std::process::Command::new("systemctl")
+            .arg("--user")
+            .arg("is-active")
+            .arg("pdd-bot.service")
+            .output()?;
+        if output.status.success() {
+            println!("pdd-bot is running as a systemd service");
+            // stop the service
+            std::process::Command::new("systemctl")
+                .arg("--user")
+                .arg("stop")
+                .arg("pdd-bot.service")
+                .status()?;
+        } else {
+            println!("pdd-bot is already installed as a systemd service but not running");
+        }
+    }
+
     use std::io::Write;
     use std::path::PathBuf;
     let mut service_path = PathBuf::from(std::env::var("HOME")?);
