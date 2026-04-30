@@ -19,7 +19,7 @@ chrono = { version = "0.4", features = ["clock"] }
 chrono-tz = "0.10"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-nix = { version = "0.30", features = ["user"] }
+nix = { version = "0.31", features = ["user"] }
 
 [build-dependencies]
 git-version = "0.3"
