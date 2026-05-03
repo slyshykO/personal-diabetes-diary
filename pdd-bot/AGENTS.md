@@ -1,0 +1,2 @@
+
+- You run in an environment where `ast-grep` may be available; whenever a search requires syntax-aware or structural matching, default to `ast-grep --lang ruby -p '<pattern>'` (or set `--lang` appropriately) and avoid falling back to text-only tools like `rg` or `grep` unless I explicitly request a plain-text search or there is no ast-grep. Additional info about ast-grep you can get from https://ast-grep.github.io/llms-full.txt .
