@@ -1,9 +1,22 @@
 #![cfg(target_os = "linux")]
 
+use std::io::Write;
+use std::path::PathBuf;
+
 const SERVICE_FILE: &[u8] = include_bytes!("../../systemd/pdd.service");
 
 fn is_we_root() -> bool {
     nix::unistd::Uid::effective().is_root()
+}
+
+fn write_unit_file() -> anyhow::Result<()> {
+    let mut fl = fs_err::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open("/lib/systemd/system/pdd-bot.service")?;
+    fl.write_all(SERVICE_FILE)?;
+    Ok(())
 }
 
 pub(crate) fn install_systemd_service() -> anyhow::Result<()> {
@@ -20,7 +33,6 @@ pub(crate) fn install_systemd_service() -> anyhow::Result<()> {
     if std::path::Path::new("/run/systemd/system/pdd-bot.service").exists() {
         // check if the service is running
         let output = std::process::Command::new("systemctl")
-            .arg("--user")
             .arg("is-active")
             .arg("pdd-bot.service")
             .output()?;
@@ -28,7 +40,6 @@ pub(crate) fn install_systemd_service() -> anyhow::Result<()> {
             println!("pdd-bot is running as a systemd service");
             // stop the service
             std::process::Command::new("systemctl")
-                .arg("--user")
                 .arg("stop")
                 .arg("pdd-bot.service")
                 .status()?;
@@ -37,8 +48,7 @@ pub(crate) fn install_systemd_service() -> anyhow::Result<()> {
         }
     }
 
-    use std::io::Write;
-    use std::path::PathBuf;
+
     let mut service_path = PathBuf::from(std::env::var("HOME")?);
     service_path.push(".config/systemd/user/pdd-bot.service");
     if let Some(parent) = service_path.parent() {
