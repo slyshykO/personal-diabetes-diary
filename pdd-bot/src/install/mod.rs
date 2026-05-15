@@ -12,3 +12,15 @@ pub(crate) fn install() -> anyhow::Result<()> {
         anyhow::bail!("install is only supported on Linux")
     }
 }
+
+pub(crate) fn uninstall() -> anyhow::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        install_linux::uninstall_systemd_service()
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        anyhow::bail!("uninstall is only supported on Linux")
+    }
+}

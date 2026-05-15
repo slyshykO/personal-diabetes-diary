@@ -1,17 +1,17 @@
 [Unit]
-Description=Miner API service
-After=network.target
+Description=Personal Diabetes Diary bot
+After=network-online.target
+Wants=network-online.target
 
 [Service]
-PIDFile=/run/pdd-bot.pid
+Type=simple
+WorkingDirectory=/opt/alex/share
 ExecStart=/opt/alex/bin/pdd-bot --config /opt/alex/share/config.toml
-ExecStop=/bin/sh -l -c "kill -15 $(ps ax | grep -v grep | grep pdd-bot | awk '{print $1}')"
 Restart=always
 RestartSec=3
-StandardOutput=syslog
-StandardError=syslog
-SyslogIdentifier=api
-KillMode=process
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pdd-bot
 
 [Install]
 WantedBy=multi-user.target

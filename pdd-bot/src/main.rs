@@ -27,6 +27,13 @@ async fn main() -> ExitCode {
                 ExitCode::from(4)
             }
         },
+        Some(args::Action::Uninstall) => match install::uninstall() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("failed to uninstall: {e}");
+                ExitCode::from(5)
+            }
+        },
         None => {
             if let Err(e) = tgbot::run(args.config).await {
                 eprintln!("error: {e}");
@@ -38,6 +45,10 @@ async fn main() -> ExitCode {
     }
 }
 
-async fn config_check<P: AsRef<Path> + Send>(_path: P) -> anyhow::Result<()> {
+async fn config_check<P: AsRef<Path> + Send>(path: P) -> anyhow::Result<()> {
+    let config = args::AppConfig::from_file(path)?;
+    for warning in config.check_compatibility()? {
+        eprintln!("warning: {warning}");
+    }
     Ok(())
 }

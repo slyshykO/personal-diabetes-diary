@@ -1,3 +1,4 @@
+use anyhow::Context;
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -30,6 +31,8 @@ pub(crate) enum Action {
     },
     /// Install as service (Linux only).
     Install,
+    /// Uninstall service and installed files (Linux only).
+    Uninstall,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -45,6 +48,18 @@ pub(crate) struct AppConfig {
 
 #[allow(dead_code)]
 impl AppConfig {
+    pub fn default_install_config() -> Self {
+        Self {
+            tg_bot_token: Some(String::new()),
+            tg_chat_id: Some(Vec::new()),
+            data_dir: Some("/opt/alex/share/data".to_string()),
+            input_timezone: Some("Europe/Kyiv".to_string()),
+            glucose_after_meal_reminder_minutes: Some(150),
+            glucose_after_meal_reminder_count: Some(3),
+            glucose_after_meal_reminder_interval_minutes: Some(15),
+        }
+    }
+
     pub fn from_file<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
         let content = fs_err::read_to_string(path)?;
         let config = toml::from_str(&content)?;
@@ -54,5 +69,38 @@ impl AppConfig {
         let s = content.as_ref();
         let config = toml::from_str(s)?;
         Ok(config)
+    }
+
+    pub fn check_compatibility(&self) -> anyhow::Result<Vec<String>> {
+        let mut warnings = Vec::new();
+
+        match self.tg_bot_token.as_deref() {
+            Some(token) if !token.trim().is_empty() => {}
+            Some(_) => warnings.push("tg_bot_token is empty".to_string()),
+            None => warnings.push("tg_bot_token is missing".to_string()),
+        }
+
+        match &self.tg_chat_id {
+            Some(chat_ids) if chat_ids.is_empty() => {
+                warnings.push("tg_chat_id is empty".to_string());
+            }
+            Some(chat_ids) => {
+                for chat_id in chat_ids {
+                    chat_id
+                        .parse::<i64>()
+                        .with_context(|| format!("invalid tg_chat_id '{chat_id}'"))?;
+                }
+            }
+            None => warnings.push("tg_chat_id is missing".to_string()),
+        }
+
+        if let Some(input_timezone) = &self.input_timezone {
+            input_timezone
+                .parse::<chrono_tz::Tz>()
+                .map(|_| ())
+                .map_err(|_| anyhow::anyhow!("invalid input_timezone '{input_timezone}'"))?;
+        }
+
+        Ok(warnings)
     }
 }
