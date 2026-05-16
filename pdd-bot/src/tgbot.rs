@@ -20,6 +20,8 @@ const BTN_SHOW_MENU: &str = "📋 Show menu";
 const MED_BUTTON_PREFIX: &str = "💊 ";
 const MEDICATIONS_FILE: &str = "medications.txt";
 const MEDICATION_LOG_FILE: &str = "medication_log.csv";
+const GLUCOSE_LOG_FILE: &str = "glucose.csv";
+const WEIGHT_LOG_FILE: &str = "weight.csv";
 
 #[derive(Debug, Clone, Copy)]
 enum GlucoseTag {
@@ -711,7 +713,7 @@ fn append_measurement_csv(
             append_glucose_csv(data_dir, chat_id, tag, value, None, None)?;
         }
         PendingEntry::Weight => {
-            let file = user_data_dir(data_dir, chat_id).join("weight.csv");
+            let file = user_data_dir(data_dir, chat_id).join(WEIGHT_LOG_FILE);
             append_line_if_needed(&file, "timestamp,chat_id,value_kg")?;
             let ts = chrono::Utc::now().to_rfc3339();
             append_csv_line(&file, &format!("{ts},{},{}", chat_id.0, value))?;
@@ -729,7 +731,7 @@ fn append_glucose_csv(
     timestamp: Option<&str>,
     note: Option<&str>,
 ) -> anyhow::Result<()> {
-    let file = user_data_dir(data_dir, chat_id).join("glucose.csv");
+    let file = user_data_dir(data_dir, chat_id).join(GLUCOSE_LOG_FILE);
     append_line_if_needed(&file, "timestamp,chat_id,tag,value_mmol_l,note")?;
     let ts = match timestamp {
         Some(raw) => chrono::DateTime::parse_from_rfc3339(raw)
