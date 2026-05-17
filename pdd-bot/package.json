@@ -1,0 +1,22 @@
+{
+  "name": "fastoch-vite",
+  "version": "1.0.0",
+  "description": "",
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "dotnet tool restore && dotnet fable watch fastoch-app -o ./fastoch-app/bin/fable-js --define DEBUG --run vite serve",
+    "build": "dotnet tool restore && dotnet fable fastoch-app -o ./fastoch-app/bin/fable-js --define RELEASE --run vite build"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.2.4",
+    "daisyui": "^5.5.19",
+    "tailwindcss": "^4.2.4",
+    "vite": "^8.0.10",
+    "vite-plugin-compression2": "^2.5.3",
+    "vite-plugin-singlefile": "^2.3.3"
+  }
+}

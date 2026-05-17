@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="fastoch-app/fastoch-app.fsproj" />
+  <Project Path="fastoch-test/fastoch-test.fsproj" />
+</Solution>
