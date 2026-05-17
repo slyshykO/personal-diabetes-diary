@@ -1,12 +1,13 @@
 use clap::Parser;
 use std::path::Path;
 use std::process::ExitCode;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use tokio::signal;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 pub mod install;
 
 mod args;
+mod http;
 mod state;
 mod tgbot;
 
@@ -26,7 +27,8 @@ async fn main() -> ExitCode {
         },
         Some(args::Action::DefaultConfig) => {
             let default = args::AppConfig::default();
-            let toml = toml::to_string_pretty(&default).expect("Failed to serialize default config");
+            let toml =
+                toml::to_string_pretty(&default).expect("Failed to serialize default config");
             println!("{toml}");
             ExitCode::SUCCESS
         }
@@ -65,9 +67,7 @@ async fn run<P: AsRef<Path> + Send>(path: P) -> anyhow::Result<()> {
     );
     let path = path.as_ref();
     let config = args::AppConfig::from_file(path)?;
-    let shutdown_handlers = vec![
-        tgbot::run(config.tg_config).await?,
-    ];
+    let shutdown_handlers = vec![tgbot::run(config.tg_config).await?];
     wait_for_shutdown_signal().await;
     for handler in shutdown_handlers.into_iter().flatten() {
         if handler.send(()).is_err() {
