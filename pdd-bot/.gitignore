@@ -2,6 +2,11 @@
 .data/
 /target
 xtask/target
+node_modules/
+dist/
+bin/
+obj/
+
 .codex
 Cargo.lock
 config.toml
