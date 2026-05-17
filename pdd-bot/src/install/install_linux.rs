@@ -229,7 +229,7 @@ fn ensure_or_check_config() -> anyhow::Result<()> {
 }
 
 fn default_config_bytes() -> anyhow::Result<Vec<u8>> {
-    let config = crate::args::AppConfig::default_install_config();
+    let config = crate::args::AppConfig::default();
     let content = toml::to_string_pretty(&config)?;
     Ok(content.into_bytes())
 }

@@ -7,8 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use teloxide::prelude::*;
 use teloxide::types::{KeyboardButton, KeyboardMarkup};
-use tokio::sync::Mutex;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tokio::sync::{Mutex, watch};
 
 const DEFAULT_AFTER_MEAL_REMINDER_MINUTES: u64 = 150;
 const DEFAULT_AFTER_MEAL_REMINDER_COUNT: u32 = 3;
@@ -46,7 +45,7 @@ enum PendingEntry {
 }
 
 #[derive(Debug, Clone)]
-struct AppState {
+struct TgBotState {
     pending_by_chat: Arc<Mutex<HashMap<ChatId, PendingEntry>>>,
     after_meal_reminder_generations: Arc<Mutex<HashMap<ChatId, u64>>>,
     allowed_chat_ids: HashSet<ChatId>,
@@ -57,15 +56,21 @@ struct AppState {
     glucose_after_meal_reminder_interval_minutes: u64,
 }
 
-pub(crate) async fn run<P: AsRef<Path> + Send>(path: P) -> anyhow::Result<()> {
-    init_tracing();
-    tracing::info!(
-        "{}, version: {}",
-        env!("CARGO_PKG_NAME"),
-        args::get_version_str()
-    );
-    let path = path.as_ref();
-    let config = args::AppConfig::from_file(path)?;
+pub(crate) async fn run(config: args::TgConfig) -> anyhow::Result<Option<watch::Sender<()>>> {
+    let (tx, rx) = watch::channel(());
+    match run_inner(config, rx).await {
+        Ok(()) => Ok(Some(tx)),
+        Err(e) => {
+            tracing::error!("bot error: {e}");
+            Ok(None)
+        }
+    }
+}
+
+pub(crate) async fn run_inner(
+    config: args::TgConfig,
+    mut shutdown: watch::Receiver<()>,
+) -> anyhow::Result<()> {
     let tg_bot_token = config
         .tg_bot_token
         .ok_or_else(|| anyhow::anyhow!("tg_bot_token is required in config"))?;
@@ -105,7 +110,7 @@ pub(crate) async fn run<P: AsRef<Path> + Send>(path: P) -> anyhow::Result<()> {
         .unwrap_or(DEFAULT_AFTER_MEAL_REMINDER_INTERVAL_MINUTES);
     fs_err::create_dir_all(&data_dir)?;
 
-    let state = AppState {
+    let state = TgBotState {
         pending_by_chat: Arc::new(Mutex::new(HashMap::new())),
         after_meal_reminder_generations: Arc::new(Mutex::new(HashMap::new())),
         allowed_chat_ids,
@@ -117,19 +122,27 @@ pub(crate) async fn run<P: AsRef<Path> + Send>(path: P) -> anyhow::Result<()> {
     };
 
     let bot = Bot::new(tg_bot_token);
-    tracing::info!("Running with config: {}", path.display());
 
     let shared_state = Arc::new(state);
-    teloxide::repl(bot, move |bot: Bot, message: Message| {
-        let state = Arc::clone(&shared_state);
-        async move {
-            if let Err(err) = handle_message(bot, message, state).await {
-                tracing::error!("handler error: {err}");
+
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = shutdown.changed() => {
+                tracing::info!("shutdown signal received, stopping bot");
             }
-            respond(())
-        }
-    })
-    .await;
+            _ = teloxide::repl(bot, move |bot: Bot, message: Message| {
+                    let state = Arc::clone(&shared_state);
+                    async move {
+                        if let Err(err) = handle_message(bot, message, state).await {
+                            tracing::error!("handler error: {err}");
+                        }
+                        respond(())
+                    }
+                }) => {
+                    tracing::info!("teloxide loop exited");
+                }
+        } //select!
+    });
 
     Ok(())
 }
@@ -157,12 +170,12 @@ fn build_menu_keyboard(medications: &[String]) -> KeyboardMarkup {
     KeyboardMarkup::new(rows).resize_keyboard()
 }
 
-async fn menu_keyboard(state: &AppState, chat_id: ChatId) -> KeyboardMarkup {
+async fn menu_keyboard(state: &TgBotState, chat_id: ChatId) -> KeyboardMarkup {
     let medications = load_medications(&state.data_dir, chat_id).unwrap_or_default();
     build_menu_keyboard(&medications)
 }
 
-async fn handle_message(bot: Bot, message: Message, state: Arc<AppState>) -> anyhow::Result<()> {
+async fn handle_message(bot: Bot, message: Message, state: Arc<TgBotState>) -> anyhow::Result<()> {
     let chat_id = message.chat.id;
     if !state.allowed_chat_ids.contains(&chat_id) {
         return Ok(());
@@ -351,7 +364,7 @@ async fn handle_message(bot: Bot, message: Message, state: Arc<AppState>) -> any
 
 async fn update_after_meal_reminders(
     bot: &Bot,
-    state: &Arc<AppState>,
+    state: &Arc<TgBotState>,
     chat_id: ChatId,
     tag: GlucoseTag,
 ) {
@@ -361,7 +374,7 @@ async fn update_after_meal_reminders(
     }
 }
 
-async fn schedule_after_meal_reminders(bot: &Bot, state: &Arc<AppState>, chat_id: ChatId) {
+async fn schedule_after_meal_reminders(bot: &Bot, state: &Arc<TgBotState>, chat_id: ChatId) {
     let reminder_minutes = state.glucose_after_meal_reminder_minutes;
     let reminder_count = state.glucose_after_meal_reminder_count;
     if reminder_minutes == 0 || reminder_count == 0 {
@@ -405,21 +418,21 @@ async fn schedule_after_meal_reminders(bot: &Bot, state: &Arc<AppState>, chat_id
     });
 }
 
-async fn next_after_meal_reminder_generation(state: &AppState, chat_id: ChatId) -> u64 {
+async fn next_after_meal_reminder_generation(state: &TgBotState, chat_id: ChatId) -> u64 {
     let mut lock = state.after_meal_reminder_generations.lock().await;
     let generation = lock.entry(chat_id).or_insert(0);
     *generation = generation.saturating_add(1);
     *generation
 }
 
-async fn cancel_after_meal_reminders(state: &AppState, chat_id: ChatId) {
+async fn cancel_after_meal_reminders(state: &TgBotState, chat_id: ChatId) {
     let mut lock = state.after_meal_reminder_generations.lock().await;
     let generation = lock.entry(chat_id).or_insert(0);
     *generation = generation.saturating_add(1);
 }
 
 async fn is_current_after_meal_reminder_generation(
-    state: &AppState,
+    state: &TgBotState,
     chat_id: ChatId,
     reminder_generation: u64,
 ) -> bool {
@@ -427,7 +440,7 @@ async fn is_current_after_meal_reminder_generation(
     lock.get(&chat_id).copied() == Some(reminder_generation)
 }
 
-async fn send_menu(bot: &Bot, chat_id: ChatId, state: &AppState) -> anyhow::Result<()> {
+async fn send_menu(bot: &Bot, chat_id: ChatId, state: &TgBotState) -> anyhow::Result<()> {
     bot.send_message(
         chat_id,
         "Diabetes diary menu:\n- Glucose before meal\n- Glucose after meal\n- Weight\n- Medications\nUse /addmed <name> to add medication button.\nUse /addgb or /addga for direct glucose entry with optional date/time.",
@@ -592,7 +605,7 @@ fn normalize_medication_name(name: &str) -> String {
     name.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-async fn medication_exists(state: &AppState, chat_id: ChatId, name: &str) -> bool {
+async fn medication_exists(state: &TgBotState, chat_id: ChatId, name: &str) -> bool {
     let normalized = normalize_medication_name(name);
     let medications = load_medications(&state.data_dir, chat_id).unwrap_or_default();
     medications
@@ -600,7 +613,7 @@ async fn medication_exists(state: &AppState, chat_id: ChatId, name: &str) -> boo
         .any(|existing| existing.eq_ignore_ascii_case(&normalized))
 }
 
-async fn add_medication(state: &AppState, chat_id: ChatId, name: &str) -> anyhow::Result<bool> {
+async fn add_medication(state: &TgBotState, chat_id: ChatId, name: &str) -> anyhow::Result<bool> {
     let normalized = normalize_medication_name(name);
     if normalized.is_empty() {
         return Ok(false);
@@ -677,17 +690,17 @@ fn append_medication_log_csv(
     )
 }
 
-async fn set_pending(state: &AppState, chat_id: ChatId, pending: PendingEntry) {
+async fn set_pending(state: &TgBotState, chat_id: ChatId, pending: PendingEntry) {
     let mut lock = state.pending_by_chat.lock().await;
     lock.insert(chat_id, pending);
 }
 
-async fn get_pending(state: &AppState, chat_id: ChatId) -> Option<PendingEntry> {
+async fn get_pending(state: &TgBotState, chat_id: ChatId) -> Option<PendingEntry> {
     let lock = state.pending_by_chat.lock().await;
     lock.get(&chat_id).copied()
 }
 
-async fn clear_pending(state: &AppState, chat_id: ChatId) {
+async fn clear_pending(state: &TgBotState, chat_id: ChatId) {
     let mut lock = state.pending_by_chat.lock().await;
     lock.remove(&chat_id);
 }
@@ -773,17 +786,4 @@ fn append_csv_line(path: &Path, line: &str) -> anyhow::Result<()> {
         .open(path)?;
     writeln!(file, "{line}")?;
     Ok(())
-}
-
-fn init_tracing() {
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::new(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "pdd_bot=debug,teloxide=debug".into()),
-        ))
-        .with(
-            tracing_subscriber::fmt::layer()
-                .with_file(true)
-                .with_line_number(true),
-        )
-        .init();
 }

@@ -29,14 +29,15 @@ pub(crate) enum Action {
         #[clap(short, long, value_parser, default_value = "config.toml")]
         config: String,
     },
+    DefaultConfig,
     /// Install as service (Linux only).
     Install,
     /// Uninstall service and installed files (Linux only).
     Uninstall,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
-pub(crate) struct AppConfig {
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct TgConfig {
     pub(crate) tg_bot_token: Option<String>,
     pub(crate) tg_chat_id: Option<Vec<String>>,
     pub(crate) data_dir: Option<String>,
@@ -46,9 +47,8 @@ pub(crate) struct AppConfig {
     pub(crate) glucose_after_meal_reminder_interval_minutes: Option<u64>,
 }
 
-#[allow(dead_code)]
-impl AppConfig {
-    pub fn default_install_config() -> Self {
+impl Default for TgConfig {
+    fn default() -> Self {
         Self {
             tg_bot_token: Some(String::new()),
             tg_chat_id: Some(Vec::new()),
@@ -56,10 +56,18 @@ impl AppConfig {
             input_timezone: Some("Europe/Kyiv".to_string()),
             glucose_after_meal_reminder_minutes: Some(150),
             glucose_after_meal_reminder_count: Some(3),
-            glucose_after_meal_reminder_interval_minutes: Some(15),
+            glucose_after_meal_reminder_interval_minutes: Some(3),
         }
     }
+}
 
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub(crate) struct AppConfig {
+    pub(crate) tg_config: TgConfig,
+}
+
+#[allow(dead_code)]
+impl AppConfig {
     pub fn from_file<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
         let content = fs_err::read_to_string(path)?;
         let config = toml::from_str(&content)?;
@@ -74,13 +82,13 @@ impl AppConfig {
     pub fn check_compatibility(&self) -> anyhow::Result<Vec<String>> {
         let mut warnings = Vec::new();
 
-        match self.tg_bot_token.as_deref() {
+        match self.tg_config.tg_bot_token.as_deref() {
             Some(token) if !token.trim().is_empty() => {}
             Some(_) => warnings.push("tg_bot_token is empty".to_string()),
             None => warnings.push("tg_bot_token is missing".to_string()),
         }
 
-        match &self.tg_chat_id {
+        match &self.tg_config.tg_chat_id {
             Some(chat_ids) if chat_ids.is_empty() => {
                 warnings.push("tg_chat_id is empty".to_string());
             }
@@ -94,7 +102,7 @@ impl AppConfig {
             None => warnings.push("tg_chat_id is missing".to_string()),
         }
 
-        if let Some(input_timezone) = &self.input_timezone {
+        if let Some(input_timezone) = &self.tg_config.input_timezone {
             input_timezone
                 .parse::<chrono_tz::Tz>()
                 .map(|_| ())
