@@ -57,6 +57,25 @@ struct TgBotState {
 }
 
 pub(crate) async fn run(config: args::TgConfig) -> anyhow::Result<Option<watch::Sender<()>>> {
+    let token_missing = config
+        .tg_bot_token
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .is_empty();
+    let chat_ids_missing = config.tg_chat_id.as_ref().is_none_or(Vec::is_empty);
+
+    if token_missing || chat_ids_missing {
+        let reason = match (token_missing, chat_ids_missing) {
+            (true, true) => "tg_bot_token and tg_chat_id are not configured",
+            (true, false) => "tg_bot_token is not configured",
+            (false, true) => "tg_chat_id is not configured",
+            (false, false) => unreachable!(),
+        };
+        tracing::info!("telegram bot disabled: {reason}");
+        return Ok(None);
+    }
+
     let (tx, rx) = watch::channel(());
     match run_inner(config, rx).await {
         Ok(()) => Ok(Some(tx)),

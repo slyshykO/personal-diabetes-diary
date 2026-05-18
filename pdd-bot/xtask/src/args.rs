@@ -13,6 +13,14 @@ pub(crate) enum Action {
         #[clap(long, default_value_t = false)]
         release: bool,
     },
+    Run {
+        #[clap(long, default_value_t = false)]
+        release: bool,
+    },
+    Dev {
+        #[clap(long)]
+        config: Option<String>,
+    },
     Npm {
         #[clap(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,

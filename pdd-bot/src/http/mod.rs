@@ -1,11 +1,18 @@
 use crate::args::HtmlConfig;
-use axum::Extension;
+use axum::{Extension, Json, routing::get};
 //use axum::middleware::from_extractor;
 use axum_client_ip::ClientIpSource;
+use serde::Serialize;
 use std::net::SocketAddr;
 use tokio::sync::watch;
 
 const DIST_INDEX_HTML_GZ: &[u8] = include_bytes!("../../dist/index.html.gz");
+
+#[derive(Serialize)]
+struct HealthResponse {
+    status: &'static str,
+    version: &'static str,
+}
 
 async fn shutdown(mut rx: watch::Receiver<()>) {
     match rx.changed().await {
@@ -34,12 +41,26 @@ async fn handler_404() -> impl axum::response::IntoResponse {
     )
 }
 
+#[allow(clippy::unused_async)]
+async fn api_health() -> impl axum::response::IntoResponse {
+    Json(HealthResponse {
+        status: "ok",
+        version: crate::args::get_version_str(),
+    })
+}
+
 pub async fn run(config: HtmlConfig) -> anyhow::Result<Option<watch::Sender<()>>> {
     if config.enable {
         let (tx, shutdown_receiver) = watch::channel(());
         let listener = tokio::net::TcpListener::bind(&config.listen).await?;
+        let api_router = axum::Router::new()
+            .route("/", get(api_health))
+            .route("/health", get(api_health))
+            .fallback(handler_404);
         let router = axum::Router::new()
-            .route("/", axum::routing::get(dist_index_gz))
+            .nest("/api", api_router)
+            .route("/", get(dist_index_gz))
+            .route("/{*path}", get(dist_index_gz))
             //.layer(from_extractor::<middleware::IpValidator>())
             .layer(ClientIpSource::ConnectInfo.into_extension())
             .layer(Extension(config.allow))
