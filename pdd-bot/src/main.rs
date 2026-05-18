@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use tokio::signal;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-pub mod install;
+mod install;
 
 mod args;
 mod http;
@@ -57,7 +57,6 @@ async fn main() -> ExitCode {
     }
 }
 
-//pub(crate) async fn run<P: AsRef<Path> + Send>(path: P) -> anyhow::Result<()>
 async fn run<P: AsRef<Path> + Send>(path: P) -> anyhow::Result<()> {
     init_tracing();
     tracing::info!(
