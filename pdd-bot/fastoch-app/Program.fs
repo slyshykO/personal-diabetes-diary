@@ -7,6 +7,7 @@ open State
 open View
 
 
-Program.mkProgram init update view 
+Program.mkProgram init update view
+|> Program.withSubscription subscriptions
 |> Program.withFastoch "app"
 |> Program.run
