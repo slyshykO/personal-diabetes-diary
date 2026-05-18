@@ -1,4 +1,5 @@
-﻿
+﻿module Main
+
 open Fastoch.Elmish
 open Fastoch.Elmish.HMR
 
