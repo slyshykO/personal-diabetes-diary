@@ -1,10 +1,14 @@
+use std::ffi::{OsStr, OsString};
+use std::path::Path;
 use std::process::ExitCode;
-use colorz::Colorize;
+
+use anyhow::Context;
 use clap::Parser;
+use colorz::Colorize;
 
 mod args;
 
-static CWD : std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+static CWD: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 
 #[macro_export]
 macro_rules! x_print_blue {
@@ -42,12 +46,14 @@ fn xtask() -> anyhow::Result<()> {
     let args = args::Args::parse();
     match args.action {
         Some(args::Action::Build { release }) => {
+            npm(["run", "build"])?;
             let mut cargo_args = vec!["build"];
             if release {
                 cargo_args.push("--release");
             }
             cargo(&cargo_args)
         }
+        Some(args::Action::Npm { args }) => npm(args),
         None => {
             anyhow::bail!("No action specified");
         }
@@ -67,31 +73,64 @@ fn cargo(args: &[&str]) -> anyhow::Result<()> {
     x_print_blue!("cargo {}", &args.join(" "));
 
     let mut cmd = std::process::Command::new("cargo");
-    match cmd
-        .args(args)
-        .status()?
-        .success()
-    {
+    match cmd.args(args).status()?.success() {
         true => Ok(()),
         false => Err(anyhow::anyhow!("[xtask] command failed")),
     }
 }
 
-fn shell(cmd: &str, args: &[&str]) -> anyhow::Result<()> {
-    let shell = if cfg!(windows) {
-        ("cmd.exe", "/C")
-    } else {
-        ("sh", "-c")
-    };
-    x_print_blue!("{} {}", cmd, &args.join(" "));
-    let status = std::process::Command::new(shell.0)
-        .arg(shell.1)
-        .arg(cmd)
-        .args(args)
-        .status()?;
+fn npm<I, S>(args: I) -> anyhow::Result<()>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let args: Vec<OsString> = args
+        .into_iter()
+        .map(|arg| arg.as_ref().to_os_string())
+        .collect();
+    let printable_args: Vec<String> = args
+        .iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
+
+    x_print_blue!("npm {}", printable_args.join(" "));
+    let mut cmd = std::process::Command::new("npm");
+    cmd.args(&args);
+
+    if let Some(path) = sanitized_path_for_npm() {
+        cmd.env("PATH", path);
+    }
+
+    let status = cmd
+        .status()
+        .context("failed to run npm; make sure Linux npm is installed and available in PATH")?;
 
     match status.success() {
         true => Ok(()),
-        false => Err(anyhow::anyhow!("[xtask] command failed: {}", cmd)),
+        false => Err(anyhow::anyhow!("[xtask] command failed: npm")),
     }
+}
+
+fn sanitized_path_for_npm() -> Option<OsString> {
+    if !cfg!(unix) {
+        return None;
+    }
+
+    let path = std::env::var_os("PATH")?;
+    let sanitized_paths = std::env::split_paths(&path)
+        .filter(|path| !is_windows_path_under_unix(path))
+        .collect::<Vec<_>>();
+
+    std::env::join_paths(sanitized_paths).ok()
+}
+
+fn is_windows_path_under_unix(path: &Path) -> bool {
+    let path = path.to_string_lossy();
+    let Some(rest) = path.strip_prefix("/mnt/") else {
+        return false;
+    };
+
+    let mut chars = rest.chars();
+    matches!(chars.next(), Some(drive) if drive.is_ascii_alphabetic())
+        && matches!(chars.next(), Some('/') | None)
 }

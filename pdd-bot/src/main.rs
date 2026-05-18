@@ -10,7 +10,6 @@ mod args;
 mod http;
 mod state;
 mod tgbot;
-
 #[tokio::main]
 async fn main() -> ExitCode {
     let args = args::Args::parse();
@@ -67,7 +66,10 @@ async fn run<P: AsRef<Path> + Send>(path: P) -> anyhow::Result<()> {
     );
     let path = path.as_ref();
     let config = args::AppConfig::from_file(path)?;
-    let shutdown_handlers = vec![tgbot::run(config.tg_config).await?];
+    let shutdown_handlers = vec![
+        tgbot::run(config.tg_config).await?,
+        http::run(config.html_config).await?,
+    ];
     wait_for_shutdown_signal().await;
     for handler in shutdown_handlers.into_iter().flatten() {
         if handler.send(()).is_err() {

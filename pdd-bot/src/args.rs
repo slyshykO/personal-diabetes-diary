@@ -1,6 +1,7 @@
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::Path;
 
 const GIT_VERSION: &str = env!("GIT_VERSION");
@@ -61,9 +62,27 @@ impl Default for TgConfig {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct HtmlConfig {
+    pub enable: bool,
+    pub listen: SocketAddr,
+    pub allow: Vec<String>,
+}
+
+impl Default for HtmlConfig {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            listen: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 8080)),
+            allow: vec![],
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub(crate) struct AppConfig {
     pub(crate) tg_config: TgConfig,
+    pub(crate) html_config: HtmlConfig,
 }
 
 #[allow(dead_code)]
