@@ -1,0 +1,21 @@
+{
+    email {$CADDY_ACME_EMAIL:admin@example.com}
+}
+
+# Public entrypoint for the Personal Diabetes Diary SPA and API.
+# Keep pdd-bot bound to 127.0.0.1:8080 and expose only Caddy to the internet.
+{$PDD_DOMAIN:localhost} {
+    encode zstd gzip
+
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy no-referrer
+    }
+
+    basic_auth {
+        {$PDD_BASIC_AUTH_USER:pdd} {$PDD_BASIC_AUTH_HASH}
+    }
+
+    reverse_proxy 127.0.0.1:8080
+}
