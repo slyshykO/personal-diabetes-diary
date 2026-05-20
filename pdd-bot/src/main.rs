@@ -8,6 +8,7 @@ mod install;
 
 mod args;
 mod data;
+mod reports;
 mod http;
 mod state;
 mod tgbot;
