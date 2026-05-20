@@ -7,6 +7,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 mod install;
 
 mod args;
+mod data;
 mod http;
 mod state;
 mod tgbot;
