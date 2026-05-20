@@ -1,5 +1,5 @@
 use crate::data::GlucoseTag;
-use crate::{args, data};
+use crate::{args, data, reports};
 use chrono::{Datelike, LocalResult, NaiveDate, NaiveTime, TimeZone, Utc};
 use chrono_tz::Tz;
 use std::collections::{HashMap, HashSet};
@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use teloxide::prelude::*;
-use teloxide::types::{KeyboardButton, KeyboardMarkup};
+use teloxide::types::{InputFile, KeyboardButton, KeyboardMarkup};
 use tokio::sync::{Mutex, watch};
 
 const DEFAULT_AFTER_MEAL_REMINDER_MINUTES: u64 = 150;
@@ -17,6 +17,7 @@ const BTN_GLUCOSE_BEFORE_MEAL: &str = "🩸 Glucose: Before meal";
 const BTN_GLUCOSE_AFTER_MEAL: &str = "🩸 Glucose: After meal";
 const BTN_WEIGHT: &str = "⚖️ Weight";
 const BTN_SHOW_MENU: &str = "📋 Show menu";
+const BTN_GLUCOSE_REPORT: &str = "📄 Glucose report";
 const MED_BUTTON_PREFIX: &str = "💊 ";
 
 #[derive(Debug, Clone, Copy)]
@@ -156,8 +157,9 @@ fn build_menu_keyboard(medications: &[String]) -> KeyboardMarkup {
         ],
         vec![
             KeyboardButton::new(BTN_WEIGHT),
-            KeyboardButton::new(BTN_SHOW_MENU),
+            KeyboardButton::new(BTN_GLUCOSE_REPORT),
         ],
+        vec![KeyboardButton::new(BTN_SHOW_MENU)],
     ];
 
     for meds_chunk in medications.chunks(2) {
@@ -191,6 +193,11 @@ async fn handle_message(bot: Bot, message: Message, state: Arc<TgBotState>) -> a
         bot.send_message(chat_id, help_text())
             .reply_markup(menu_keyboard(&state, chat_id).await)
             .await?;
+        return Ok(());
+    }
+
+    if is_glucose_report_command(text) {
+        send_glucose_report(&bot, chat_id, &state).await?;
         return Ok(());
     }
 
@@ -254,6 +261,10 @@ async fn handle_message(bot: Bot, message: Message, state: Arc<TgBotState>) -> a
     match text {
         "/start" | "/menu" | BTN_SHOW_MENU => {
             send_menu(&bot, chat_id, &state).await?;
+            return Ok(());
+        }
+        BTN_GLUCOSE_REPORT => {
+            send_glucose_report(&bot, chat_id, &state).await?;
             return Ok(());
         }
         BTN_GLUCOSE_BEFORE_MEAL => {
@@ -444,7 +455,7 @@ async fn is_current_after_meal_reminder_generation(
 async fn send_menu(bot: &Bot, chat_id: ChatId, state: &TgBotState) -> anyhow::Result<()> {
     bot.send_message(
         chat_id,
-        "Diabetes diary menu:\n- Glucose before meal\n- Glucose after meal\n- Weight\n- Medications\nUse /addmed <name> to add medication button.\nUse /addgb or /addga for direct glucose entry with optional date/time.",
+        "Diabetes diary menu:\n- Glucose before meal\n- Glucose after meal\n- Weight\n- Glucose report\n- Medications\nUse /addmed <name> to add medication button.\nUse /addgb, /addga, or /report.",
     )
     .reply_markup(menu_keyboard(state, chat_id).await)
     .await?;
@@ -473,10 +484,24 @@ fn parse_glucose_add_command(text: &str) -> Option<(GlucoseTag, &str)> {
     None
 }
 
+async fn send_glucose_report(bot: &Bot, chat_id: ChatId, state: &TgBotState) -> anyhow::Result<()> {
+    let path = reports::glucose_report(&state.data_dir, chat_id.0)?;
+    bot.send_document(chat_id, InputFile::file(path))
+        .caption("Glucose report")
+        .reply_markup(menu_keyboard(state, chat_id).await)
+        .await?;
+    Ok(())
+}
+
+fn is_glucose_report_command(text: &str) -> bool {
+    matches!(text, "/report" | "/glucose_report")
+}
+
 fn help_text() -> &'static str {
     "Commands:\n\
 /menu - show menu buttons\n\
 /help - show this help\n\
+/report - create and send glucose report\n\
 /addmed <name> - add medication button\n\
 /addgb <value> [date time] [@note] - add glucose before meal\n\
 /addga <value> [date time] [@note] - add glucose after meal\n\n\
