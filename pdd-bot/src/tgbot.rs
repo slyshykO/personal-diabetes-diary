@@ -1,6 +1,9 @@
 use crate::data::GlucoseTag;
 use crate::{args, data, reports};
-use chrono::{Datelike, LocalResult, NaiveDate, NaiveTime, TimeZone, Utc};
+use chrono::{
+    DateTime, Datelike, Duration as ChronoDuration, LocalResult, NaiveDate, NaiveTime, TimeZone,
+    Utc,
+};
 use chrono_tz::Tz;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -397,6 +400,17 @@ async fn schedule_after_meal_reminders(bot: &Bot, state: &Arc<TgBotState>, chat_
     let reminder_interval_minutes = state.glucose_after_meal_reminder_interval_minutes;
     let bot = bot.clone();
     let state = Arc::clone(state);
+    let now_local = Utc::now().with_timezone(&state.input_tz);
+    let first_reminder_time =
+        format_reminder_time(now_local, now_local + chrono_minutes(reminder_minutes));
+    let reminder_message = format!(
+        "Reminder set: measure glucose after meal at {} ({}).",
+        first_reminder_time, state.input_tz
+    );
+    bot.send_message(chat_id, reminder_message)
+        .reply_markup(menu_keyboard(&state, chat_id).await)
+        .await
+        .ok();
     tokio::spawn(async move {
         for reminder_index in 0..reminder_count {
             let delay_minutes = if reminder_index == 0 {
@@ -428,6 +442,19 @@ async fn schedule_after_meal_reminders(bot: &Bot, state: &Arc<TgBotState>, chat_
             }
         }
     });
+}
+
+fn format_reminder_time(reference_time: DateTime<Tz>, reminder_time: DateTime<Tz>) -> String {
+    let pattern = if reminder_time.date_naive() == reference_time.date_naive() {
+        "%H:%M"
+    } else {
+        "%Y.%m.%d %H:%M"
+    };
+    reminder_time.format(pattern).to_string()
+}
+
+fn chrono_minutes(minutes: u64) -> ChronoDuration {
+    ChronoDuration::minutes(minutes.min(i64::MAX as u64) as i64)
 }
 
 async fn next_after_meal_reminder_generation(state: &TgBotState, chat_id: ChatId) -> u64 {
