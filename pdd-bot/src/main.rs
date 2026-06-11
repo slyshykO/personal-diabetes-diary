@@ -64,7 +64,7 @@ async fn run<P: AsRef<Path> + Send>(path: P) -> anyhow::Result<()> {
     tracing::info!(
         "{}, version: {}",
         env!("CARGO_PKG_NAME"),
-        args::get_version_str()
+        args::get_version_str().trim()
     );
     let path = path.as_ref();
     let config = args::AppConfig::from_file(path)?;
