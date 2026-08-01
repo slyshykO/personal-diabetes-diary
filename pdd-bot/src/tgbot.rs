@@ -1,5 +1,5 @@
 use crate::data::GlucoseTag;
-use crate::{args, data, reports};
+use crate::{args, data, reports, state};
 use chrono::{
     DateTime, Datelike, Duration as ChronoDuration, LocalResult, NaiveDate, NaiveTime, TimeZone,
     Utc,
@@ -42,7 +42,10 @@ struct TgBotState {
     glucose_after_meal_reminder_interval_minutes: u64,
 }
 
-pub(crate) async fn run(config: args::TgConfig) -> anyhow::Result<Option<watch::Sender<()>>> {
+pub(crate) async fn run(
+    config: args::TgConfig,
+    app_state: state::AppState,
+) -> anyhow::Result<Option<watch::Sender<()>>> {
     let token_missing = config
         .tg_bot_token
         .as_deref()
@@ -62,19 +65,15 @@ pub(crate) async fn run(config: args::TgConfig) -> anyhow::Result<Option<watch::
         return Ok(None);
     }
 
-    let (tx, rx) = watch::channel(());
-    match run_inner(config, rx).await {
-        Ok(()) => Ok(Some(tx)),
-        Err(e) => {
-            tracing::error!("bot error: {e}");
-            Ok(None)
-        }
-    }
+    let (shutdown, shutdown_receiver) = watch::channel(());
+    run_inner(config, shutdown_receiver, app_state).await?;
+    Ok(Some(shutdown))
 }
 
 pub(crate) async fn run_inner(
     config: args::TgConfig,
     mut shutdown: watch::Receiver<()>,
+    app_state: state::AppState,
 ) -> anyhow::Result<()> {
     let tg_bot_token = config
         .tg_bot_token
@@ -130,10 +129,12 @@ pub(crate) async fn run_inner(
 
     let shared_state = Arc::new(state);
 
-    tokio::spawn(async move {
+    app_state.spawn("telegram bot", async move {
         tokio::select! {
-            _ = shutdown.changed() => {
-                tracing::info!("shutdown signal received, stopping bot");
+            result = shutdown.changed() => {
+                result.map_err(|_| anyhow::anyhow!("telegram shutdown channel closed unexpectedly"))?;
+                tracing::info!("shutdown signal received, stopping telegram bot");
+                Ok(())
             }
             _ = teloxide::repl(bot, move |bot: Bot, message: Message| {
                     let state = Arc::clone(&shared_state);
@@ -144,10 +145,10 @@ pub(crate) async fn run_inner(
                         respond(())
                     }
                 }) => {
-                    tracing::info!("teloxide loop exited");
+                    Err(anyhow::anyhow!("teloxide polling loop exited unexpectedly"))
                 }
         } //select!
-    });
+    })?;
 
     Ok(())
 }

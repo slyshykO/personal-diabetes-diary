@@ -68,11 +68,12 @@ async fn run<P: AsRef<Path> + Send>(path: P) -> anyhow::Result<()> {
     );
     let path = path.as_ref();
     let config = args::AppConfig::from_file(path)?;
+    let app_state = state::AppState::default();
     let shutdown_handlers = vec![
-        tgbot::run(config.tg_config).await?,
-        http::run(config.html_config).await?,
+        tgbot::run(config.tg_config, app_state.clone()).await?,
+        http::run(config.html_config, app_state.clone()).await?,
     ];
-    wait_for_shutdown_signal().await;
+    let shutdown_result = wait_for_shutdown_signal(&app_state).await;
     for handler in shutdown_handlers.into_iter().flatten() {
         if handler.send(()).is_err() {
             tracing::error!("failed to send shutdown signal to handler");
@@ -80,7 +81,7 @@ async fn run<P: AsRef<Path> + Send>(path: P) -> anyhow::Result<()> {
             tracing::info!("shutdown signal sent to handler");
         }
     }
-    Ok(())
+    shutdown_result
 }
 
 async fn config_check<P: AsRef<Path> + Send>(path: P) -> anyhow::Result<()> {
@@ -105,7 +106,7 @@ fn init_tracing() {
 }
 
 #[allow(clippy::redundant_pub_crate)]
-async fn wait_for_shutdown_signal() {
+async fn wait_for_shutdown_signal(app_state: &state::AppState) -> anyhow::Result<()> {
     let ctrl_c = async {
         signal::ctrl_c()
             .await
@@ -124,7 +125,24 @@ async fn wait_for_shutdown_signal() {
     let terminate = std::future::pending::<()>();
 
     tokio::select! {
-        _ = ctrl_c => tracing::info!("ctrl+c received, shutting down"),
-        _ = terminate => tracing::info!("terminate received, shutting down"),
+        _ = ctrl_c => {
+            tracing::info!("ctrl+c received, shutting down");
+            Ok(())
+        }
+        _ = terminate => {
+            tracing::info!("terminate received, shutting down");
+            Ok(())
+        }
+        stopped = app_state.wait_for_runnable_stop() => {
+            match stopped.status {
+                state::RunnableStatus::Running => unreachable!(),
+                state::RunnableStatus::Stopped => {
+                    anyhow::bail!("{} stopped unexpectedly", stopped.name)
+                }
+                state::RunnableStatus::Failed(error) => {
+                    anyhow::bail!("{} failed: {error}", stopped.name)
+                }
+            }
+        }
     }
 }

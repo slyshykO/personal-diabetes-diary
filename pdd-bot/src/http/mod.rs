@@ -1,4 +1,5 @@
 use crate::args::HtmlConfig;
+use crate::state;
 use axum::{Extension, Json, routing::get};
 //use axum::middleware::from_extractor;
 use axum_client_ip::ClientIpSource;
@@ -49,7 +50,10 @@ async fn api_health() -> impl axum::response::IntoResponse {
     })
 }
 
-pub async fn run(config: HtmlConfig) -> anyhow::Result<Option<watch::Sender<()>>> {
+pub async fn run(
+    config: HtmlConfig,
+    app_state: state::AppState,
+) -> anyhow::Result<Option<watch::Sender<()>>> {
     if config.enable {
         let (tx, shutdown_receiver) = watch::channel(());
         let listener = tokio::net::TcpListener::bind(&config.listen).await?;
@@ -65,18 +69,16 @@ pub async fn run(config: HtmlConfig) -> anyhow::Result<Option<watch::Sender<()>>
             .layer(ClientIpSource::ConnectInfo.into_extension())
             .layer(Extension(config.allow))
             .fallback(handler_404);
-        tokio::spawn(async move {
+        app_state.spawn("http server", async move {
             tracing::info!("http server started on {:?}", config.listen);
-            let res = axum::serve(
+            axum::serve(
                 listener,
                 router.into_make_service_with_connect_info::<SocketAddr>(),
             )
             .with_graceful_shutdown(shutdown(shutdown_receiver))
-            .await;
-            if let Err(e) = res {
-                tracing::error!("http server error: {}", e);
-            }
-        });
+            .await
+            .map_err(Into::into)
+        })?;
         Ok(Some(tx))
     } else {
         Ok(None)
