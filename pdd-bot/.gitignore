@@ -10,3 +10,4 @@ obj/
 .codex
 Cargo.lock
 config.toml
+.fake
