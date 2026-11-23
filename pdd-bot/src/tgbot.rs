@@ -1,10 +1,14 @@
+mod reminders;
+
 use crate::data::GlucoseTag;
 use crate::{args, data, reports, state};
+use anyhow::Context;
 use chrono::{
     DateTime, Datelike, Duration as ChronoDuration, LocalResult, NaiveDate, NaiveTime, TimeZone,
     Utc,
 };
 use chrono_tz::Tz;
+use reminders::{Reminder, ReminderStore};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -33,7 +37,8 @@ enum PendingEntry {
 #[derive(Debug, Clone)]
 struct TgBotState {
     pending_by_chat: Arc<Mutex<HashMap<ChatId, PendingEntry>>>,
-    after_meal_reminder_generations: Arc<Mutex<HashMap<ChatId, u64>>>,
+    after_meal_reminders: Arc<Mutex<ReminderStore>>,
+    reminder_shutdown: watch::Receiver<()>,
     allowed_chat_ids: HashSet<ChatId>,
     data_dir: PathBuf,
     input_tz: Tz,
@@ -114,9 +119,28 @@ pub(crate) async fn run_inner(
         .unwrap_or(DEFAULT_AFTER_MEAL_REMINDER_INTERVAL_MINUTES);
     data::ensure_data_dir(&data_dir)?;
 
+    let reminder_store_path = reminders::store_path();
+    let reminder_store = ReminderStore::open(
+        &reminder_store_path,
+        &allowed_chat_ids.iter().map(|id| id.0).collect(),
+        glucose_after_meal_reminder_minutes > 0 && glucose_after_meal_reminder_count > 0,
+    )
+    .with_context(|| {
+        format!(
+            "failed to initialize reminders from {}",
+            reminder_store_path.display()
+        )
+    })?;
+    let pending_reminders = reminder_store.pending();
+    tracing::info!(
+        count = pending_reminders.len(),
+        "restoring after-meal reminders"
+    );
+
     let state = TgBotState {
         pending_by_chat: Arc::new(Mutex::new(HashMap::new())),
-        after_meal_reminder_generations: Arc::new(Mutex::new(HashMap::new())),
+        after_meal_reminders: Arc::new(Mutex::new(reminder_store)),
+        reminder_shutdown: shutdown.clone(),
         allowed_chat_ids,
         data_dir,
         input_tz,
@@ -130,6 +154,9 @@ pub(crate) async fn run_inner(
     let shared_state = Arc::new(state);
 
     app_state.spawn("telegram bot", async move {
+        for (generation, reminder) in pending_reminders {
+            spawn_after_meal_reminders(&bot, &shared_state, ChatId(reminder.chat_id), generation);
+        }
         tokio::select! {
             result = shutdown.changed() => {
                 result.map_err(|_| anyhow::anyhow!("telegram shutdown channel closed unexpectedly"))?;
@@ -140,7 +167,7 @@ pub(crate) async fn run_inner(
                     let state = Arc::clone(&shared_state);
                     async move {
                         if let Err(err) = handle_message(bot, message, state).await {
-                            tracing::error!("handler error: {err}");
+                            tracing::error!("handler error: {err:#}");
                         }
                         respond(())
                     }
@@ -235,7 +262,7 @@ async fn handle_message(bot: Bot, message: Message, state: Arc<TgBotState>) -> a
             timestamp.as_deref(),
             note.as_deref(),
         )?;
-        update_after_meal_reminders(&bot, &state, chat_id, tag, message.date).await;
+        update_after_meal_reminders(&bot, &state, chat_id, tag, message.date).await?;
         bot.send_message(chat_id, "Glucose entry saved ✅")
             .reply_markup(menu_keyboard(&state, chat_id).await)
             .await?;
@@ -336,7 +363,8 @@ async fn handle_message(bot: Bot, message: Message, state: Arc<TgBotState>) -> a
                             timestamp.as_deref(),
                             note.as_deref(),
                         )?;
-                        update_after_meal_reminders(&bot, &state, chat_id, tag, message.date).await;
+                        update_after_meal_reminders(&bot, &state, chat_id, tag, message.date)
+                            .await?;
                         clear_pending(&state, chat_id).await;
                         bot.send_message(chat_id, "Saved ✅")
                             .reply_markup(menu_keyboard(&state, chat_id).await)
@@ -384,12 +412,12 @@ async fn update_after_meal_reminders(
     chat_id: ChatId,
     tag: GlucoseTag,
     message_time: DateTime<Utc>,
-) {
+) -> anyhow::Result<()> {
     match tag {
         GlucoseTag::BeforeMeal => {
             schedule_after_meal_reminders(bot, state, chat_id, message_time).await
         }
-        GlucoseTag::AfterMeal => cancel_after_meal_reminders(state, chat_id).await,
+        GlucoseTag::AfterMeal => state.after_meal_reminders.lock().await.cancel(chat_id.0),
     }
 }
 
@@ -398,19 +426,26 @@ async fn schedule_after_meal_reminders(
     state: &Arc<TgBotState>,
     chat_id: ChatId,
     message_time: DateTime<Utc>,
-) {
+) -> anyhow::Result<()> {
     let reminder_minutes = state.glucose_after_meal_reminder_minutes;
     let reminder_count = state.glucose_after_meal_reminder_count;
     if reminder_minutes == 0 || reminder_count == 0 {
-        return;
+        return Ok(());
     }
 
-    let reminder_generation = next_after_meal_reminder_generation(state, chat_id).await;
-    let reminder_interval_minutes = state.glucose_after_meal_reminder_interval_minutes;
-    let bot = bot.clone();
-    let state = Arc::clone(state);
+    let first_reminder_at = i64::try_from(reminder_minutes)
+        .ok()
+        .and_then(ChronoDuration::try_minutes)
+        .and_then(|delay| message_time.checked_add_signed(delay))
+        .context("invalid after-meal reminder delay")?;
+    let generation = state.after_meal_reminders.lock().await.schedule(Reminder {
+        chat_id: chat_id.0,
+        next_at: first_reminder_at,
+        next_number: 1,
+        count: reminder_count,
+        interval_minutes: state.glucose_after_meal_reminder_interval_minutes,
+    })?;
     let now_local = Utc::now().with_timezone(&state.input_tz);
-    let first_reminder_at = message_time + chrono_minutes(reminder_minutes);
     let first_reminder_time =
         format_reminder_time(now_local, first_reminder_at.with_timezone(&state.input_tz));
     let reminder_message = format!(
@@ -418,41 +453,82 @@ async fn schedule_after_meal_reminders(
         first_reminder_time, state.input_tz
     );
     bot.send_message(chat_id, reminder_message)
-        .reply_markup(menu_keyboard(&state, chat_id).await)
+        .reply_markup(menu_keyboard(state, chat_id).await)
         .await
         .ok();
+    spawn_after_meal_reminders(bot, state, chat_id, generation);
+    Ok(())
+}
+
+fn spawn_after_meal_reminders(
+    bot: &Bot,
+    state: &Arc<TgBotState>,
+    chat_id: ChatId,
+    generation: u64,
+) {
+    let bot = bot.clone();
+    let state = Arc::clone(state);
+    let mut shutdown = state.reminder_shutdown.clone();
     tokio::spawn(async move {
-        for reminder_index in 0..reminder_count {
-            let delay = if reminder_index == 0 {
-                // Include delivery and acknowledgement delays; overdue reminders fire now.
-                remaining_reminder_delay(first_reminder_at, Utc::now())
-            } else {
-                Duration::from_secs(reminder_interval_minutes.saturating_mul(60))
-            };
-            tokio::time::sleep(delay).await;
-
-            if !is_current_after_meal_reminder_generation(&state, chat_id, reminder_generation)
-                .await
-            {
-                return;
-            }
-
-            if let Err(err) = bot
-                .send_message(
-                    chat_id,
-                    format!(
-                        "Time to measure glucose after meal. Reminder {}/{}.",
-                        reminder_index + 1,
-                        reminder_count
-                    ),
-                )
-                .reply_markup(menu_keyboard(&state, chat_id).await)
-                .await
-            {
-                tracing::error!("after meal reminder error: {err}");
+        tokio::select! {
+            _ = shutdown.changed() => {}
+            result = run_after_meal_reminders(&bot, &state, chat_id, generation) => {
+                if let Err(error) = result {
+                    tracing::error!("after meal reminder error: {error:#}");
+                }
             }
         }
     });
+}
+
+async fn run_after_meal_reminders(
+    bot: &Bot,
+    state: &TgBotState,
+    chat_id: ChatId,
+    generation: u64,
+) -> anyhow::Result<()> {
+    loop {
+        let Some(reminder) = state
+            .after_meal_reminders
+            .lock()
+            .await
+            .get(chat_id.0, generation)
+        else {
+            return Ok(());
+        };
+        tokio::time::sleep(remaining_reminder_delay(reminder.next_at, Utc::now())).await;
+        if state
+            .after_meal_reminders
+            .lock()
+            .await
+            .get(chat_id.0, generation)
+            .is_none()
+        {
+            return Ok(());
+        }
+
+        if let Err(error) = bot
+            .send_message(
+                chat_id,
+                format!(
+                    "Time to measure glucose after meal. Reminder {}/{}.",
+                    reminder.next_number, reminder.count
+                ),
+            )
+            .reply_markup(menu_keyboard(state, chat_id).await)
+            .await
+        {
+            // Keep the pending reminder on disk until Telegram accepts it.
+            tracing::error!("after meal reminder send failed: {error}");
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            continue;
+        }
+        state
+            .after_meal_reminders
+            .lock()
+            .await
+            .mark_sent(chat_id.0, generation, Utc::now())?;
+    }
 }
 
 fn remaining_reminder_delay(reminder_time: DateTime<Utc>, now: DateTime<Utc>) -> Duration {
@@ -466,32 +542,6 @@ fn format_reminder_time(reference_time: DateTime<Tz>, reminder_time: DateTime<Tz
         "%Y.%m.%d %H:%M"
     };
     reminder_time.format(pattern).to_string()
-}
-
-fn chrono_minutes(minutes: u64) -> ChronoDuration {
-    ChronoDuration::minutes(minutes.min(i64::MAX as u64) as i64)
-}
-
-async fn next_after_meal_reminder_generation(state: &TgBotState, chat_id: ChatId) -> u64 {
-    let mut lock = state.after_meal_reminder_generations.lock().await;
-    let generation = lock.entry(chat_id).or_insert(0);
-    *generation = generation.saturating_add(1);
-    *generation
-}
-
-async fn cancel_after_meal_reminders(state: &TgBotState, chat_id: ChatId) {
-    let mut lock = state.after_meal_reminder_generations.lock().await;
-    let generation = lock.entry(chat_id).or_insert(0);
-    *generation = generation.saturating_add(1);
-}
-
-async fn is_current_after_meal_reminder_generation(
-    state: &TgBotState,
-    chat_id: ChatId,
-    reminder_generation: u64,
-) -> bool {
-    let lock = state.after_meal_reminder_generations.lock().await;
-    lock.get(&chat_id).copied() == Some(reminder_generation)
 }
 
 async fn send_menu(bot: &Bot, chat_id: ChatId, state: &TgBotState) -> anyhow::Result<()> {
@@ -722,9 +772,9 @@ mod tests {
     #[test]
     fn delayed_message_waits_only_until_original_reminder_time() {
         let message_time = Utc.with_ymd_and_hms(2026, 11, 23, 10, 0, 0).unwrap();
-        let reminder_time = message_time + chrono_minutes(150);
+        let reminder_time = message_time + ChronoDuration::minutes(150);
         // Delivery took 30 minutes and sending the acknowledgement took another 5 seconds.
-        let now = message_time + chrono_minutes(30) + ChronoDuration::seconds(5);
+        let now = message_time + ChronoDuration::minutes(30) + ChronoDuration::seconds(5);
 
         assert_eq!(
             remaining_reminder_delay(reminder_time, now),
@@ -735,7 +785,7 @@ mod tests {
     #[test]
     fn due_and_overdue_reminders_do_not_wait() {
         let reminder_time = Utc.with_ymd_and_hms(2026, 11, 23, 12, 30, 0).unwrap();
-        for now in [reminder_time, reminder_time + chrono_minutes(60)] {
+        for now in [reminder_time, reminder_time + ChronoDuration::minutes(60)] {
             assert_eq!(remaining_reminder_delay(reminder_time, now), Duration::ZERO);
         }
     }

@@ -50,7 +50,7 @@ async fn main() -> ExitCode {
         },
         None => {
             if let Err(e) = run(args.config).await {
-                eprintln!("error: {e}");
+                eprintln!("error: {e:#}");
                 ExitCode::FAILURE
             } else {
                 ExitCode::SUCCESS
