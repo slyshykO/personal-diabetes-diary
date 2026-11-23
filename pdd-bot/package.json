@@ -7,8 +7,10 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
+    "prebuild": "dotnet tool restore && dotnet restore",
+    "predev": "dotnet tool restore && dotnet restore",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "dotnet tool restore && dotnet fable watch fastoch-app -o ./fastoch-app/bin/fable-js --define DEBUG --run vite serve",
+    "dev": "dotnet fable watch fastoch-app -o ./fastoch-app/bin/fable-js --define DEBUG --run vite serve",
     "build": "dotnet tool restore && dotnet fable fastoch-app -o ./fastoch-app/bin/fable-js --define RELEASE --run vite build"
   },
   "devDependencies": {
