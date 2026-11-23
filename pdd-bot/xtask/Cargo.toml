@@ -9,4 +9,4 @@ clap = { version = "4.0", features = ["derive"] }
 fs-err = "3"
 colorz = "1"
 ctrlc = "3"
-nix = { version = "0.31", features = ["signal"] }
+nix = { version = "0.32", features = ["signal"] }
