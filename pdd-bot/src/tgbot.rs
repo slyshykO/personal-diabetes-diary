@@ -235,7 +235,7 @@ async fn handle_message(bot: Bot, message: Message, state: Arc<TgBotState>) -> a
             timestamp.as_deref(),
             note.as_deref(),
         )?;
-        update_after_meal_reminders(&bot, &state, chat_id, tag).await;
+        update_after_meal_reminders(&bot, &state, chat_id, tag, message.date).await;
         bot.send_message(chat_id, "Glucose entry saved ✅")
             .reply_markup(menu_keyboard(&state, chat_id).await)
             .await?;
@@ -336,7 +336,7 @@ async fn handle_message(bot: Bot, message: Message, state: Arc<TgBotState>) -> a
                             timestamp.as_deref(),
                             note.as_deref(),
                         )?;
-                        update_after_meal_reminders(&bot, &state, chat_id, tag).await;
+                        update_after_meal_reminders(&bot, &state, chat_id, tag, message.date).await;
                         clear_pending(&state, chat_id).await;
                         bot.send_message(chat_id, "Saved ✅")
                             .reply_markup(menu_keyboard(&state, chat_id).await)
@@ -383,14 +383,22 @@ async fn update_after_meal_reminders(
     state: &Arc<TgBotState>,
     chat_id: ChatId,
     tag: GlucoseTag,
+    message_time: DateTime<Utc>,
 ) {
     match tag {
-        GlucoseTag::BeforeMeal => schedule_after_meal_reminders(bot, state, chat_id).await,
+        GlucoseTag::BeforeMeal => {
+            schedule_after_meal_reminders(bot, state, chat_id, message_time).await
+        }
         GlucoseTag::AfterMeal => cancel_after_meal_reminders(state, chat_id).await,
     }
 }
 
-async fn schedule_after_meal_reminders(bot: &Bot, state: &Arc<TgBotState>, chat_id: ChatId) {
+async fn schedule_after_meal_reminders(
+    bot: &Bot,
+    state: &Arc<TgBotState>,
+    chat_id: ChatId,
+    message_time: DateTime<Utc>,
+) {
     let reminder_minutes = state.glucose_after_meal_reminder_minutes;
     let reminder_count = state.glucose_after_meal_reminder_count;
     if reminder_minutes == 0 || reminder_count == 0 {
@@ -402,8 +410,9 @@ async fn schedule_after_meal_reminders(bot: &Bot, state: &Arc<TgBotState>, chat_
     let bot = bot.clone();
     let state = Arc::clone(state);
     let now_local = Utc::now().with_timezone(&state.input_tz);
+    let first_reminder_at = message_time + chrono_minutes(reminder_minutes);
     let first_reminder_time =
-        format_reminder_time(now_local, now_local + chrono_minutes(reminder_minutes));
+        format_reminder_time(now_local, first_reminder_at.with_timezone(&state.input_tz));
     let reminder_message = format!(
         "Reminder set: measure glucose after meal at {} ({}).",
         first_reminder_time, state.input_tz
@@ -414,12 +423,13 @@ async fn schedule_after_meal_reminders(bot: &Bot, state: &Arc<TgBotState>, chat_
         .ok();
     tokio::spawn(async move {
         for reminder_index in 0..reminder_count {
-            let delay_minutes = if reminder_index == 0 {
-                reminder_minutes
+            let delay = if reminder_index == 0 {
+                // Include delivery and acknowledgement delays; overdue reminders fire now.
+                remaining_reminder_delay(first_reminder_at, Utc::now())
             } else {
-                reminder_interval_minutes
+                Duration::from_secs(reminder_interval_minutes.saturating_mul(60))
             };
-            tokio::time::sleep(Duration::from_secs(delay_minutes.saturating_mul(60))).await;
+            tokio::time::sleep(delay).await;
 
             if !is_current_after_meal_reminder_generation(&state, chat_id, reminder_generation)
                 .await
@@ -443,6 +453,10 @@ async fn schedule_after_meal_reminders(bot: &Bot, state: &Arc<TgBotState>, chat_
             }
         }
     });
+}
+
+fn remaining_reminder_delay(reminder_time: DateTime<Utc>, now: DateTime<Utc>) -> Duration {
+    (reminder_time - now).to_std().unwrap_or(Duration::ZERO)
 }
 
 fn format_reminder_time(reference_time: DateTime<Tz>, reminder_time: DateTime<Tz>) -> String {
@@ -699,4 +713,39 @@ async fn clear_pending(state: &TgBotState, chat_id: ChatId) {
 fn parse_decimal(input: &str) -> Option<f64> {
     let normalized = input.trim().replace(',', ".");
     normalized.parse::<f64>().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delayed_message_waits_only_until_original_reminder_time() {
+        let message_time = Utc.with_ymd_and_hms(2026, 11, 23, 10, 0, 0).unwrap();
+        let reminder_time = message_time + chrono_minutes(150);
+        // Delivery took 30 minutes and sending the acknowledgement took another 5 seconds.
+        let now = message_time + chrono_minutes(30) + ChronoDuration::seconds(5);
+
+        assert_eq!(
+            remaining_reminder_delay(reminder_time, now),
+            Duration::from_secs(120 * 60 - 5)
+        );
+    }
+
+    #[test]
+    fn due_and_overdue_reminders_do_not_wait() {
+        let reminder_time = Utc.with_ymd_and_hms(2026, 11, 23, 12, 30, 0).unwrap();
+        for now in [reminder_time, reminder_time + chrono_minutes(60)] {
+            assert_eq!(remaining_reminder_delay(reminder_time, now), Duration::ZERO);
+        }
+    }
+
+    #[test]
+    fn overdue_reminder_from_previous_day_includes_date() {
+        let tz = chrono_tz::Europe::Kyiv;
+        let now = tz.with_ymd_and_hms(2026, 11, 24, 0, 15, 0).unwrap();
+        let reminder_time = tz.with_ymd_and_hms(2026, 11, 23, 23, 30, 0).unwrap();
+
+        assert_eq!(format_reminder_time(now, reminder_time), "2026.11.23 23:30");
+    }
 }
