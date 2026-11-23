@@ -8,7 +8,8 @@ use std::process::{Command, Output};
 
 const SERVICE_FILE: &[u8] = include_bytes!("../../systemd/pdd.service");
 const SERVICE_NAME: &str = "pdd-bot.service";
-const SERVICE_PATH: &str = "/run/systemd/system/pdd-bot.service";
+const PERMANENT_SERVICE_PATH: &str = "/etc/systemd/system/pdd-bot.service";
+const TEMPORARY_SERVICE_PATH: &str = "/run/systemd/system/pdd-bot.service";
 const BINARY_PATH: &str = "/opt/alex/bin/pdd-bot";
 const CONFIG_PATH: &str = "/opt/alex/share/config.toml";
 
@@ -24,7 +25,7 @@ fn is_we_root() -> bool {
     nix::unistd::Uid::effective().is_root()
 }
 
-pub(crate) fn install_systemd_service() -> anyhow::Result<()> {
+pub(crate) fn install_systemd_service(temporary: bool) -> anyhow::Result<()> {
     if !is_we_root() {
         anyhow::bail!("must be run as root");
     }
@@ -44,21 +45,38 @@ pub(crate) fn install_systemd_service() -> anyhow::Result<()> {
         run_systemctl(&["stop", SERVICE_NAME])?;
     }
 
-    let service_changed = install_bytes(Path::new(SERVICE_PATH), SERVICE_FILE, 0o644)
-        .with_context(|| format!("failed to write {SERVICE_PATH}"))?;
-    if service_changed {
-        println!("service unit written to {SERVICE_PATH}");
-    } else {
-        println!("service unit is already up to date at {SERVICE_PATH}");
+    // Clear enablement in both locations before switching installation modes.
+    if service_state.registered || service_unit_exists() {
+        disable_service()?;
     }
 
-    if service_changed || !service_state.registered {
-        run_systemctl(&["daemon-reload"])?;
-        println!("systemd daemon reloaded");
+    let (service_path, previous_path) = if temporary {
+        (TEMPORARY_SERVICE_PATH, PERMANENT_SERVICE_PATH)
+    } else {
+        (PERMANENT_SERVICE_PATH, TEMPORARY_SERVICE_PATH)
+    };
+    let service_changed = install_bytes(Path::new(service_path), SERVICE_FILE, 0o644)
+        .with_context(|| format!("failed to write {service_path}"))?;
+    if service_changed {
+        println!("service unit written to {service_path}");
+    } else {
+        println!("service unit is already up to date at {service_path}");
     }
+
+    remove_installed_file(previous_path)?;
+    run_systemctl(&["daemon-reload"])?;
+    println!("systemd daemon reloaded");
 
     install_current_exe()?;
     ensure_or_check_config()?;
+
+    if temporary {
+        run_systemctl(&["enable", "--runtime", SERVICE_NAME])?;
+        println!("{SERVICE_NAME} enabled until reboot");
+    } else {
+        run_systemctl(&["enable", SERVICE_NAME])?;
+        println!("{SERVICE_NAME} enabled at boot");
+    }
 
     if service_state.active || !service_state.registered {
         run_systemctl(&["start", SERVICE_NAME])?;
@@ -90,19 +108,22 @@ pub(crate) fn uninstall_systemd_service() -> anyhow::Result<()> {
         run_systemctl(&["stop", SERVICE_NAME])?;
     }
 
-    if service_state.registered {
-        run_systemctl(&["disable", SERVICE_NAME])?;
-        println!("{SERVICE_NAME} disabled");
+    if service_state.registered || service_unit_exists() {
+        disable_service()?;
     } else {
         println!("{SERVICE_NAME} is not registered");
     }
 
-    let service_removed = remove_file_if_exists(Path::new(SERVICE_PATH))
-        .with_context(|| format!("failed to remove {SERVICE_PATH}"))?;
-    if service_removed {
-        println!("service unit removed from {SERVICE_PATH}");
-    } else {
-        println!("service unit is already absent at {SERVICE_PATH}");
+    let mut service_removed = false;
+    for service_path in [PERMANENT_SERVICE_PATH, TEMPORARY_SERVICE_PATH] {
+        if remove_file_if_exists(Path::new(service_path))
+            .with_context(|| format!("failed to remove {service_path}"))?
+        {
+            println!("service unit removed from {service_path}");
+            service_removed = true;
+        } else {
+            println!("service unit is already absent at {service_path}");
+        }
     }
 
     if service_state.registered || service_removed {
@@ -113,6 +134,17 @@ pub(crate) fn uninstall_systemd_service() -> anyhow::Result<()> {
     remove_installed_file(BINARY_PATH)?;
     remove_installed_file(CONFIG_PATH)?;
 
+    Ok(())
+}
+
+fn service_unit_exists() -> bool {
+    Path::new(PERMANENT_SERVICE_PATH).exists() || Path::new(TEMPORARY_SERVICE_PATH).exists()
+}
+
+fn disable_service() -> anyhow::Result<()> {
+    run_systemctl(&["disable", SERVICE_NAME])?;
+    run_systemctl(&["disable", "--runtime", SERVICE_NAME])?;
+    println!("{SERVICE_NAME} disabled permanently and for this boot");
     Ok(())
 }
 

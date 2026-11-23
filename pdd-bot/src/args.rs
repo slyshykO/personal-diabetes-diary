@@ -31,8 +31,12 @@ pub(crate) enum Action {
         config: String,
     },
     DefaultConfig,
-    /// Install as service (Linux only).
-    Install,
+    /// Install as a permanent service enabled at boot (Linux only).
+    Install {
+        /// Install the service in /run only, until the next reboot.
+        #[clap(long)]
+        temporary: bool,
+    },
     /// Uninstall service and installed files (Linux only).
     Uninstall,
 }

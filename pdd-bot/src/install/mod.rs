@@ -1,14 +1,15 @@
 #[cfg(target_os = "linux")]
 mod install_linux;
 
-pub(crate) fn install() -> anyhow::Result<()> {
+pub(crate) fn install(temporary: bool) -> anyhow::Result<()> {
     #[cfg(target_os = "linux")]
     {
-        install_linux::install_systemd_service()
+        install_linux::install_systemd_service(temporary)
     }
 
     #[cfg(not(target_os = "linux"))]
     {
+        let _ = temporary;
         anyhow::bail!("install is only supported on Linux")
     }
 }

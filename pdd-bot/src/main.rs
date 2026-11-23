@@ -34,7 +34,7 @@ async fn main() -> ExitCode {
             println!("{toml}");
             ExitCode::SUCCESS
         }
-        Some(args::Action::Install) => match install::install() {
+        Some(args::Action::Install { temporary }) => match install::install(temporary) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("failed to install: {e}");
