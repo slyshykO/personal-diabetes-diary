@@ -80,7 +80,16 @@ fn cargo(args: &[&str]) -> anyhow::Result<()> {
 }
 
 fn build(release: bool) -> anyhow::Result<()> {
-    npm(["run", "build"])?;
+    let index_is_fresh = || {
+        std::fs::metadata(cwd().join("dist/index.html.gz"))
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age <= Duration::from_secs(60))
+    };
+    if release || !index_is_fresh() {
+        npm(["run", "build"])?;
+    }
     cargo_build(release)
 }
 
