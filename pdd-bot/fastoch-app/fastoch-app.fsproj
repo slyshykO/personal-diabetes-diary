@@ -14,7 +14,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Fastoch" Version="0.14.1" />
+    <PackageReference Include="Fastoch" Version="0.14.3" />
   </ItemGroup>
 
 </Project>
